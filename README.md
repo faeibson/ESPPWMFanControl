@@ -7,6 +7,48 @@ Settings are stored in JSON format in SPIFFS.
 
 The web interface provides you full control over the fan settings and also an auto refresh function as well as raw JSON output for further use (and some other stuff).
 
-The project is ready to display the fan levels, temperature and the auto fan control state on an 128x64px OLED connected via I2C.
+The project is ready to display the fan levels, temperature and the auto fan control state on an 128x64px SSD1306 OLED connected via I2C.
+
+Basic MQTT code is included, but commented out since not needed (until now).
 
 **This project is in beta state.** Testing is still needed and proper functionality not yet ensured.
+
+The uncompressed JavaScript code used in the web interface can be viewed [here](https://github.com/faeibson/ESPPWMFanControl/blob/master/uncompressed.js).
+
+## How to install
+
+Simply flash the project onto your ESP board through the Arduino IDE, or try out the [compiled binary](https://github.com/faeibson/ESPPWMFanControl/releases). You can flash it via [esptool](https://github.com/espressif/esptool) to your Wemos D1 mini, while NodeMCU and other similar boards with an ESP-12E or F (and maybe others) should work, too.
+
+## Requirements
+
+### Hardware
+- An ESP8266
+- NTC wired properly to V+, GND and A0 (schematic will be added soon).
+- Fans connected to the desired I/O pins (and V+/GND, of course) - as of now, these are D7, D6 and D3.
+- (optional) An OLED connected to SDA/SCL (D2/D1).
+
+### Software
+- Arduino IDE (https://www.arduino.cc/en/Main/Software)
+- Arduino IDE ESP8266 Libraries (https://github.com/esp8266/Arduino)
+- ArduinoJson (https://github.com/bblanchon/ArduinoJson)
+- Brzo I2C (https://github.com/pasko-zh/brzo_i2c)
+- ESP8266 OLED driver for SSD1306 (https://github.com/ThingPulse/esp8266-oled-ssd1306)
+- WiFiManager (https://github.com/tzapu/WiFiManager)
+
+## Possible future improvements / extensions
+
+- Support digital temperature sensors.
+- Possibility to configure the analog temperature sensor specifications.
+- Support other display types and customizable output.
+- Support MQTT.
+- ?
+
+## Screenshots
+
+### Web interface
+Note: There was no sensor connected to A0, resulting in wrong readings.
+
+![The web interface (no temperature sensor connected)"](https://github.com/faeibson/ESPPWMFanControl/raw/master/web_interface.png "The web interface (no temperature sensor connected)")
+
+### JSON output
+![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/json_output.png "JSON output")
