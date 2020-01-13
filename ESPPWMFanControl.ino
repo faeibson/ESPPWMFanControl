@@ -5,12 +5,11 @@
  * 
  */
 
-/*#include <ESP8266WiFi.h>*/
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>
 #include <FS.h>
-#include <PubSubClient.h>
+//#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "SSD1306Brzo.h"
 #include <brzo_i2c.h>
@@ -65,8 +64,7 @@ char *settingsFile = "/settings.json";
 
 Settings settings;
 ESP8266WebServer *server;
-//WiFiClient client;
-PubSubClient *mqttClient;
+//PubSubClient *mqttClient;
 SSD1306Brzo *display;
 
 double LastTemp = 0;
