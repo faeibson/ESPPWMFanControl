@@ -23,9 +23,9 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 
 ### Hardware
 - An ESP8266
-- NTC wired properly to V+, GND and A0 (schematic will be added soon).
-- Fans connected to the desired I/O pins (and V+/GND, of course) - as of now, these are D7, D6 and D3.
-- (optional) An OLED connected to SDA/SCL (D2/D1).
+- NTC wired properly to V+, GND and A0 (schematic will be added soon)
+- Fans connected to the desired I/O pins (and V+/GND, of course) - as of now, these are D7, D6 and D3
+- (optional) An OLED connected to SDA/SCL (D2/D1)
 
 ### Software
 - Arduino IDE (https://www.arduino.cc/en/Main/Software)
@@ -35,12 +35,14 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 - ESP8266 OLED driver for SSD1306 (https://github.com/ThingPulse/esp8266-oled-ssd1306)
 - WiFiManager (https://github.com/tzapu/WiFiManager)
 
-## Possible future improvements / extensions
+## Work in progress
+- Dynamic fan control configuration (add/delete rows etc.)
 
-- Support digital temperature sensors.
-- Possibility to configure the analog temperature sensor specifications.
-- Support other display types and customizable output.
-- Support MQTT.
+## Possible future improvements / extensions
+- Support digital temperature sensors
+- Possibility to configure the analog temperature sensor specifications
+- Support other display types and customizable output
+- Support MQTT
 - ?
 
 ## Screenshots
