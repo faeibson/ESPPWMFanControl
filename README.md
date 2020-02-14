@@ -54,10 +54,10 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 
 ### Web interface
 
-![The web interface](https://github.com/faeibson/ESPPWMFanControl/raw/master/web_interface_1.0beta2.png "The web interface")
+![The web interface](https://github.com/faeibson/ESPPWMFanControl/raw/master/screenshots/web_interface_1.0beta2.png "The web interface")
 
 ### JSON output
-![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/json_output_1.0beta2.png "JSON output")
+![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/screenshots/json_output_1.0beta2.png "JSON output")
 
 ## Changelog
 
