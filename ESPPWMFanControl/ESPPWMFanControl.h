@@ -1,6 +1,6 @@
 /*
  * 
- * ESP PWM Fan Control 1.0 beta - © 2020 Fabian Brain. https://github.com/faeibson 
+ * ESP PWM Fan Control 1.0-beta2 - © 2020 Fabian Brain. https://github.com/faeibson 
  * Thanks to all you guys contributing all these awesome libraries to the community!
  * 
  * This project is licensed unter the GNU General Public License v3.0

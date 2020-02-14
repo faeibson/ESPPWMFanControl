@@ -7,7 +7,8 @@
 
 namespace settings {
     
-    const bool debug = true;                                // enable additional debug messages
+    const bool debug = false;                               // enable additional debug messages
+    const bool simulation_mode = false;                     // simulate the NTC temperature measurements instead of actually reading the analog pin (i.e. random values)
     
     // NTC settings
     const uint8_t ntcAnalogPin = A0;                        // the analog pin the NTC is connected to

@@ -1,6 +1,6 @@
 /*
  * 
- * ESP PWM Fan Control 1.0 beta - © 2020 Fabian Brain. https://github.com/faeibson 
+ * ESP PWM Fan Control 1.0-beta2 - © 2020 Fabian Brain. https://github.com/faeibson 
  * Thanks to all you guys contributing all these awesome libraries to the community!
  * 
  * This project is licensed unter the GNU General Public License v3.0
@@ -79,8 +79,8 @@ void setup()
     webServer->on(PSTR("/static/style.css"), []() {
         webServer->send_P(200, progmem_assets_strings::mime_text_css, progmem_assets_css::main);
     });
-    webServer->on(PSTR("/static/favicon.ico"), []() {
-        webServer->send_P(200, progmem_assets_strings::mime_image_x_icon, progmem_assets_images::favicon, progmem_assets_images::favicon_len);
+    webServer->on(PSTR("/static/favicon.png"), []() {
+        webServer->send_P(200, progmem_assets_strings::mime_image_png, progmem_assets_images::favicon, progmem_assets_images::favicon_len);
     });
     
     webServer->onNotFound(handleNotFound);
@@ -89,7 +89,6 @@ void setup()
 
     // set initial fan speed
     if(!storage->automaticFanControlEnabled) {
-        //setFanSpeed(storage->fanSpeedActive1, storage->fanSpeedActive2, storage->fanSpeedActive3, false, false);
         setFanSpeeds((int8_t*)storage->fanSpeedsActive, false, false);
     }
 
@@ -109,8 +108,11 @@ void loop()
 
     // read temp (and do the other stuff) once per second
     if((storage->ntcTemperatureTime + 1000) < millis()) {
-        //storage->ntcTemperature = readTemperature();
-        storage->ntcTemperature = (float)random(20, 30); // test mode
+        if(settings::simulation_mode) {
+            storage->ntcTemperature = (float)random(20, 30); // test mode
+        } else {
+            storage->ntcTemperature = readTemperature();
+        }
     
         if(storage->displayEnabled) {
             if(storage->displayIsOn && storage->displayDurationPerMinute != 60) {
@@ -178,43 +180,6 @@ void handleSettingsSave() {
     bool automaticFanControlEnabled = webServer->arg("automaticFanControlEnabled") == "1";
     uint8_t fanControlSetCount = min(storage->maxFanControlSets, (uint8_t)webServer->arg("fanControlSetCount").toInt()); // limit set count
 
-    /*
-    uint8_t fan1_1 = min(max(0, (uint8_t)(webServer->arg("fan1_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan1_2 = min(max(0, (uint8_t)(webServer->arg("fan1_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan1_3 = min(max(0, (uint8_t)(webServer->arg("fan1_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan1_4 = min(max(0, (uint8_t)(webServer->arg("fan1_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan2_1 = min(max(0, (uint8_t)(webServer->arg("fan2_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan2_2 = min(max(0, (uint8_t)(webServer->arg("fan2_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan2_3 = min(max(0, (uint8_t)(webServer->arg("fan2_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan2_4 = min(max(0, (uint8_t)(webServer->arg("fan2_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan3_1 = min(max(0, (uint8_t)(webServer->arg("fan3_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan3_2 = min(max(0, (uint8_t)(webServer->arg("fan3_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan3_3 = min(max(0, (uint8_t)(webServer->arg("fan3_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    uint8_t fan3_4 = min(max(0, (uint8_t)(webServer->arg("fan3_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-    float temp_1 = webServer->arg("temp_1").toFloat();
-    float temp_2 = webServer->arg("temp_2").toFloat();
-    float temp_3 = webServer->arg("temp_3").toFloat();
-    float temp_4 = webServer->arg("temp_4").toFloat();
-  
-    storage->fanControlFan1_1 = fan1_1;
-    storage->fanControlFan1_2 = fan1_2;
-    storage->fanControlFan1_3 = fan1_3;
-    storage->fanControlFan1_4 = fan1_4;
-    storage->fanControlFan2_1 = fan2_1;
-    storage->fanControlFan2_2 = fan2_2;
-    storage->fanControlFan2_3 = fan2_3;
-    storage->fanControlFan2_4 = fan2_4;
-    storage->fanControlFan3_1 = fan3_1;
-    storage->fanControlFan3_2 = fan3_2;
-    storage->fanControlFan3_3 = fan3_3;
-    storage->fanControlFan3_4 = fan3_4;
-    storage->fanControlTemp_1 = temp_1;
-    storage->fanControlTemp_2 = temp_2;
-    storage->fanControlTemp_3 = temp_3;
-    storage->fanControlTemp_4 = temp_4;*/
-
-    /*delete [] storage->fanControlSets;
-    storage->fanControlSets = new FanControlSet[fanControlSetCount];*/
     for(uint8_t i = 0; i < storage->fanControlSetCount; i++) {
         delete storage->fanControlSets[i];
     }
@@ -232,10 +197,6 @@ void handleSettingsSave() {
         }
         
         String fanControlSetTempArg = webServer->arg(String("fanControlSetTemp") + i);
-        /*float fanControlSetTemp = std::numeric_limits<float>::min();
-        if(fanControlSetTempArg != "") {
-            fanControlSetTemp = fanControlSetTempArg.toFloat();
-        }*/
         storage->fanControlSets[i]->tempThreshold = fanControlSetTempArg.toFloat();
     }
     storage->sortFanControlSets();
@@ -255,9 +216,6 @@ void handleSettingsSave() {
     storage->displayDurationPerMinute = max(0, min(60, (int)displayDurationPerMinute));
     storage->displayEnabled = displayEnabled;
     storage->displayFlipScreen = displayFlipScreen;
-    /*if(storage->automaticFanControlEnabled && !automaticFanControlEnabled) {
-        setFanSpeed(storage->fanSpeed1, storage->fanSpeed2, storage->fanSpeed3); // restore previous manual setting
-    }*/
     storage->automaticFanControlEnabled = automaticFanControlEnabled;
   
     storage->displayLastOnTime = 0; // always reset display timeout
@@ -320,18 +278,9 @@ void handleRoot() {
     // HTML begin
     String contents = F("<!DOCTYPE html><html lang='en'><head><meta name='viewport' content='width=device-width, initial-scale=1' /><meta charset='UTF-8' />"
         "<title>Fan Control</title>"
-        "<link rel='shortcut icon' href='/static/favicon.ico' />"
+        "<link rel='icon' href='/static/favicon.png' sizes='16x16' type='image/png' />"
         "<link rel='stylesheet' href='/static/style.css' />"
         "<script type='text/javascript' src='/static/script.js'></script></head>");
-
-/*
-    // favicon
-    contents += "";
-    // CSS
-    contents += "";
-    // JavaScript
-    contents += "";
-*/
 
     // HTML body
     contents += String(F("<body><div class='container'>"
@@ -344,9 +293,6 @@ void handleRoot() {
                     "Temperature: <span id='spanTemperature1' class='fade'>")) + storage->ntcTemperature + F("</span> &deg;C<br/><br />"
                     "Auto fan control: <span id='spanFanControl' class='fade'>") + (storage->automaticFanControlEnabled ? String(F("on (Set ")) + String(storage->activeFanControlSet + 1) + F(")") : String(F("off"))) + F("</span><br/>");
     for(uint8_t i = 0; i < storage->fanCount; i++) {                 
-        /*"Fan 1: <span id='spanFanSpeed1' class='fade'>") + storage->fanSpeedActive1 + F("</span> %<br />"
-        "Fan 2: <span id='spanFanSpeed2' class='fade'>") + storage->fanSpeedActive2 + F("</span> %<br/>"
-        "Fan 3: <span id='spanFanSpeed3' class='fade'>") + storage->fanSpeedActive3 + F("</span> %</div>"*/
         contents += String(F("Fan ")) + (i + 1) + F(": <span id='spanFanSpeed") + (i + 1) + F("' class='fade'>") + storage->fanSpeedsActive[i] + F("</span> %<br />");
     }
 
@@ -361,7 +307,7 @@ void handleRoot() {
                         "<li><a href='/fans/set?fan=0&speed=50'>Set all fans to 50%</a></li>"
                         "<li><a href='/fans/set?fan=0&speed=75'>Set all fans to 75%</a></li>"
                         "<li><a href='/fans/set?fan=0&speed=100'>Set all fans to 100%</a></li>"
-                        "<li><form method='get' action='/fans/set'>Set fan <input type='text' name='fan' value='0' size='1' /> (0 = all) to <input name='speed' type='text' size='3' /> % <input type='submit' value='set' class='link' /></form></li>"));
+                        "<li><form method='get' action='/fans/set'>Set fan <input type='text' name='fan' value='0' size='2' /> (0 = all) to <input name='speed' type='text' size='3' /> % <input type='submit' value='set' class='link' /></form></li>"));
     
     contents += String(F(
             // settings
@@ -507,41 +453,6 @@ uint8_t fanControl() {
     return activeFanControlSet;
 }
 
-/*void setFanSpeed(int8_t fan1, int8_t fan2, int8_t fan3, bool permanent, bool turnOffFanControl) {
-    if (fan1 < 0) { // -1 => ignore
-        fan1 = storage->fanSpeedActive1;
-    }
-    else if(permanent) {
-        storage->fanSpeed1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-    }
-    
-    if (fan2 < 0) {
-        fan2 = storage->fanSpeedActive2;
-    }
-    else if(permanent) {
-        storage->fanSpeed2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-    }
-    
-    if (fan3 < 0) {
-        fan3 = storage->fanSpeedActive3;
-    }
-    else if(permanent) {
-        storage->fanSpeed3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-    }
-  
-    analogWrite(FAN_1_PIN, min(fan1 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-    analogWrite(FAN_2_PIN, min(fan2 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-    analogWrite(FAN_3_PIN, min(fan3 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-  
-    storage->fanSpeedActive1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-    storage->fanSpeedActive2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-    storage->fanSpeedActive3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  
-    if(turnOffFanControl) {
-        storage->automaticFanControlEnabled = false;
-    }
-}*/
-
 void setFanSpeeds(int8_t fanSpeeds[], bool permanent, bool turnOffFanControl) {
     for(uint8_t i = 0; i < sizeof(fanSpeeds) / sizeof(int8_t); i++) {
         if(fanSpeeds[i] < 0) { // -1 => ignore this one
@@ -576,20 +487,12 @@ void setFanSpeed(int8_t fanIndex, uint8_t fanSpeed, bool permanent, bool turnOff
     if(settings::debug) {
         Serial.print(F("Set fan ")); Serial.print(fanIndex); Serial.print(F(" to ")); Serial.println(fanSpeed);
     }
-    analogWrite(storage->fanPins[fanIndex], value);
+    analogWrite(storage->fanPins[fanIndex], value / storage->fanPercentStepSize);
     storage->fanSpeedsActive[fanIndex] = value;
     if(turnOffFanControl) {
         storage->automaticFanControlEnabled = false;
     }
 }
-
-/*void setFanSpeed(int8_t fan1, int8_t fan2, int8_t fan3) {
-    setFanSpeed(fan1, fan2, fan3, true, true);
-}
-
-void setFanSpeed(FanControlSet fanControlSet) {
-    setFanSpeed(fanControlSet.fanSpeeds[0], fanControlSet.fanSpeeds[1], fanControlSet.fanSpeeds[2], false, false);
-}*/
 
 void displayValues(bool turnOn) {
     if(!storage->displayIsOn && turnOn) {
