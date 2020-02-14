@@ -13,7 +13,7 @@ Basic MQTT code is included, but commented out since not needed (until now).
 
 **This project is in beta state.** Testing is still needed and proper functionality not yet ensured.
 
-The uncompressed JavaScript code used in the web interface can be viewed [here](https://github.com/faeibson/ESPPWMFanControl/blob/master/uncompressed.js).
+The uncompressed JavaScript code used in the web interface can be viewed [here](https://github.com/faeibson/ESPPWMFanControl/blob/master/assets/main.js). Same goes for the [CSS](https://github.com/faeibson/ESPPWMFanControl/blob/master/assets/main.css).
 
 ## How to install
 
@@ -28,29 +28,43 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 - (optional) An OLED connected to SDA/SCL (D2/D1)
 
 ### Software
-- Arduino IDE (https://www.arduino.cc/en/Main/Software)
-- Arduino IDE ESP8266 Libraries (https://github.com/esp8266/Arduino)
-- ArduinoJson (https://github.com/bblanchon/ArduinoJson)
-- Brzo I2C (https://github.com/pasko-zh/brzo_i2c)
-- ESP8266 OLED driver for SSD1306 (https://github.com/ThingPulse/esp8266-oled-ssd1306)
-- WiFiManager (https://github.com/tzapu/WiFiManager)
+- Arduino IDE (https://www.arduino.cc/en/Main/Software) (since 1.0-beta)
+- Arduino IDE ESP8266 Libraries (https://github.com/esp8266/Arduino) (since 1.0-beta)
+- ArduinoJson (https://github.com/bblanchon/ArduinoJson) (since 1.0-beta)
+- Brzo I2C (https://github.com/pasko-zh/brzo_i2c) (since 1.0-beta)
+- ESP8266 OLED driver for SSD1306 (https://github.com/ThingPulse/esp8266-oled-ssd1306) (since 1.0-beta)
+- WiFiManager (https://github.com/tzapu/WiFiManager) (since 1.0-beta)
+<!-- - ESP8266FS Plugin (https://github.com/esp8266/arduino-esp8266fs-plugin) (since 1.0-beta2)-->
 
-## Work in progress
-- Dynamic fan control configuration (add/delete rows etc.)
+<!-- ## Work in progress
+- -->
 
 ## Possible future improvements / extensions
-- Support digital temperature sensors
-- Possibility to configure the analog temperature sensor specifications
-- Support other display types and customizable output
-- Support MQTT
-- ?
+
+- Support multiple sensors.
+- Support common digital temperature sensors. (DHT22, DS18B20, BME/BMP280)
+- Support I2C in a general way.
+- Improve frontend, separate configuration page, make things more responsive and stuff more thingy.
+- Possibility to configure the analog temperature sensor specifications via frontend.
+- Support other display types and make the output customizable, e.g. modify text and change the source sensor of temperature readings.
+- Support MQTT.
+- Support to import the configuration file.
 
 ## Screenshots
 
 ### Web interface
-Note: There was no sensor connected to A0, resulting in wrong readings.
 
-![The web interface (no temperature sensor connected)"](https://github.com/faeibson/ESPPWMFanControl/raw/master/web_interface.png "The web interface (no temperature sensor connected)")
+![The web interface](https://github.com/faeibson/ESPPWMFanControl/raw/master/web_interface_1.0beta2.png "The web interface")
 
 ### JSON output
-![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/json_output.png "JSON output")
+![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/json_output_1.0beta2.png "JSON output")
+
+## Changelog
+
+### 1.0-beta2
+
+- Code refactored, improved and cleaned up a lot
+- Moved static content (favicon, JavaScript, CSS) to progmem assets
+- Added download settings + restart ESP options
+- Improved the frontend slightly. Will improve more ;)
+- Fan control is not fixed to three sets anymore: Supports up to nine dynamically insertable/removable fan control sets each with independent speeds and temperature threshold

@@ -3,822 +3,763 @@
  * ESP PWM Fan Control 1.0 beta - © 2020 Fabian Brain. https://github.com/faeibson 
  * Thanks to all you guys contributing all these awesome libraries to the community!
  * 
+ * This project is licensed unter the GNU General Public License v3.0
  */
 
-#include <DNSServer.h>
-#include <ESP8266WebServer.h>
-#include <WiFiManager.h>
-#include <FS.h>
-//#include <PubSubClient.h>
-#include <ArduinoJson.h>
-#include "SSD1306Brzo.h"
-#include <brzo_i2c.h>
-#include "font.h"
+#include "ESPPWMFanControl.h"
 
-#define fanPin1 13
-#define fanPin2 12
-#define fanPin3 0
-#define SDAPin 4
-#define SCLPin 5
+// the "fan channel" to control all fans simultaneously
+#define FANS_ALL        -1
 
-#define ANALOG_WRITE_RANGE 4
-
-static const int FAN_PERCENT_STEP_SIZE = 100/ANALOG_WRITE_RANGE;
-static const char APPLICATION_JSON[] PROGMEM = "application/json";
-static const char TEXT_PLAIN[] PROGMEM = "text/plain";
-static const char TEXT_HTML[] PROGMEM = "text/html";
-
-struct Settings {
-  char id[255] = "ESPPWMFanControl";
-  int FanSpeed1 = 100;
-  int FanSpeed2 = 100;
-  int FanSpeed3 = 100;
-  int FanSpeedActive1 = 100;
-  int FanSpeedActive2 = 100;
-  int FanSpeedActive3 = 100;
-  int PageRefreshTime = 10;
-  bool DisplayEnabled = true;
-  unsigned char DisplayAddress = 0x3C;
-  int DisplayDurationPerMinute = 30;
-  bool DisplayFlipScreen = false;
-  bool AutomaticFanControlActive = false;
-  int FanControlFan1_1 = 100;
-  int FanControlFan1_2 = 100;
-  int FanControlFan1_3 = 100;
-  int FanControlFan1_4 = 100;
-  int FanControlFan2_1 = 100;
-  int FanControlFan2_2 = 100;
-  int FanControlFan2_3 = 100;
-  int FanControlFan2_4 = 100;
-  int FanControlFan3_1 = 100;
-  int FanControlFan3_2 = 100;
-  int FanControlFan3_3 = 100;
-  int FanControlFan3_4 = 100;
-  double FanControlTemp_1 = 25;
-  double FanControlTemp_2 = 25;
-  double FanControlTemp_3 = 25;
-  double FanControlTemp_4 = 25;
-};
-
-char *settingsFile = "/settings.json";
-
-Settings settings;
-ESP8266WebServer *server;
+ESP8266WebServer *webServer;
 //PubSubClient *mqttClient;
 SSD1306Brzo *display;
-
-double LastTemp = 0;
-double LastTempTime = 0;
-
-bool resetESP = false;
-double resetESPTime = 0;
-
-double LastDisplayOnTime = 0;
-int ActiveFanControlSet = 0;
-bool displayIsOn = false;
+Storage *storage;
 
 void setup()
 {
-  // setup serial port
-  Serial.begin(115200);
-  Serial.println("Starting...\n");
+    // setup serial port
+    Serial.begin(115200);
+    Serial.println(F("ESP PWM Fan Control starting...\n"));
 
-  //SPIFFS.begin();
-  //SPIFFS.remove(settingsFile);
-
-  loadSettings();
-
-  //mqttClient = new PubSubClient(client);
-  WiFiManager *wifiManager = new WiFiManager();
-  wifiManager->autoConnect(settings.id);
-  server = new ESP8266WebServer(80);
-  server->begin();
-
-  Serial.println("WiFi Connected!\n");
-
-  //setup_mqtt();
-
-  server->on("/json", handleJson);
-  server->on("/on", handleOn);
-  server->on("/off", handleOff);
-  server->on("/set", handleSet);
-  server->on("/saveSettings", handleSaveSettings);
-  server->on("/reset", handleReset);
-  server->on("/resetSettings", handleResetSettings);
-  server->onNotFound(handleRoot);
-
-  pinMode(fanPin1, OUTPUT);
-  pinMode(fanPin2, OUTPUT);
-  pinMode(fanPin3, OUTPUT);
-  
-  analogWriteRange(ANALOG_WRITE_RANGE);  // smaller range enables higher PWM frequencies
-  analogWriteFreq(25000); // PWM frequency 25 kHz
-  
-  setFanSpeed(settings.FanSpeedActive1, settings.FanSpeedActive2, settings.FanSpeedActive3, false, false);
-  initDisplay();
-
-  Serial.println(F("ESP setup complete. Listening...\n"));
-}
-
-void initDisplay() {
-  if(display != NULL) {
-    display->end();
-    free(display);
-  }
-  display = new SSD1306Brzo(settings.DisplayAddress, SDAPin, SCLPin);
-  display->init();
-  Serial.println(F("Init display..."));
-}
-
-void loadSettings() {
-  SPIFFS.begin();
-  File f = SPIFFS.open(settingsFile, "r");
-  if (!f) {
-      Serial.println(F("Error reading settings from file. Leaving defaults."));
-  }
-  else {
-      StaticJsonDocument<1000> doc;
-      DeserializationError error = deserializeJson(doc, f);
-      if (error) {
-        Serial.println(F("Error deserializing settings. Leaving defaults."));
-      }
-      else {
-        strlcpy(settings.id,
-                doc["id"] | "ESPPWMFanControl",
-                sizeof(settings.id));
     
-        settings.FanSpeed1 = doc["FanSpeed1"] | 100;
-        settings.FanSpeed2 = doc["FanSpeed2"] | 100;
-        settings.FanSpeed3 = doc["FanSpeed3"] | 100;
-        settings.FanSpeedActive1 = doc["FanSpeedActive1"] | 100;
-        settings.FanSpeedActive2 = doc["FanSpeedActive2"] | 100;
-        settings.FanSpeedActive3 = doc["FanSpeedActive3"] | 100;
-        settings.PageRefreshTime = doc["PageRefreshTime"] | 10;
-        settings.DisplayEnabled = doc["DisplayEnabled"] | true;
-        settings.DisplayAddress = doc["DisplayAddress"] | 0x3C;
-        settings.DisplayDurationPerMinute = doc["DisplayDurationPerMinute"] | 30;
-        settings.DisplayFlipScreen = doc["DisplayFlipScreen"] | false;
-        settings.AutomaticFanControlActive = doc["AutomaticFanControlActive"] | false;
-        settings.FanControlFan1_1 = doc["FanControlFan1_1"] | 100;
-        settings.FanControlFan1_2 = doc["FanControlFan1_2"] | 100;
-        settings.FanControlFan1_3 = doc["FanControlFan1_3"] | 100;
-        settings.FanControlFan1_4 = doc["FanControlFan1_4"] | 100;
-        settings.FanControlFan2_1 = doc["FanControlFan1_1"] | 100;
-        settings.FanControlFan2_2 = doc["FanControlFan1_2"] | 100;
-        settings.FanControlFan2_3 = doc["FanControlFan1_3"] | 100;
-        settings.FanControlFan2_4 = doc["FanControlFan1_4"] | 100;
-        settings.FanControlFan3_1 = doc["FanControlFan1_1"] | 100;
-        settings.FanControlFan3_2 = doc["FanControlFan1_2"] | 100;
-        settings.FanControlFan3_3 = doc["FanControlFan1_3"] | 100;
-        settings.FanControlFan3_4 = doc["FanControlFan1_4"] | 100;
-        settings.FanControlTemp_1 = doc["FanControlTemp_1"] | 25;
-        settings.FanControlTemp_2 = doc["FanControlTemp_2"] | 25;
-        settings.FanControlTemp_3 = doc["FanControlTemp_3"] | 25;
-        settings.FanControlTemp_4 = doc["FanControlTemp_4"] | 25;
+    // setup PWM pins
+    for(uint8_t i = 0; i < settings::fanCount; i++) {
+        pinMode(settings::fanPins[i], OUTPUT);
+    }
+    analogWriteRange(settings::pwmValueRange);  
+    analogWriteFreq(settings::pwmFrequency);
+
     
-        Serial.println(F("Settings read from SPIFFS."));
+    // delete settings file on startup
+    //SPIFFS.begin();
+    //SPIFFS.remove(settings::settingsJsonFileName);
+
+    
+    // initialize configuration storage
+    storage = new Storage(settings::settingsJsonFileName, settings::fanPins, settings::fanCount, settings::pwmValueRange, settings::maxFanControlSets, settings::debug);
+    storage->load();
+
+    
+    // configure wifi
+    WiFiManager *wifiManager = new WiFiManager();
+    wifiManager->autoConnect(storage->id);
+    Serial.println(F("WiFi connected!"));
+
+    
+    // configure MQTT
+    //mqttClient = new PubSubClient(client);
+    //setup_mqtt();
+    //Serial.println(F("MQTT connected!"));
+
+
+    // configure web server
+    webServer = new ESP8266WebServer(80);
+    webServer->begin();
+
+    webServer->on(PSTR("/"), handleRoot);
+    webServer->on(PSTR("/fans/on"), handleFansOn);
+    webServer->on(PSTR("/fans/off"), handleFansOff);
+    webServer->on(PSTR("/fans/set"), handleFansSet);
+    webServer->on(PSTR("/json"), handleJson);
+    webServer->on(PSTR("/settings/save"), handleSettingsSave);
+    webServer->on(PSTR("/settings/resetAll"), handleSettingsResetAll);
+    webServer->on(PSTR("/settings/reset"), handleSettingsReset);
+    webServer->on(PSTR("/settings/restart"), handleSettingsRestart);
+    webServer->on(PSTR("/download"), handleDownload);
+    
+    //webServer->serveStatic(PSTR("/static/style.css"), SPIFFS, settings::cssFileName);
+    //webServer->serveStatic(PSTR("/static/script.js"), SPIFFS, settings::javaScriptFileName);
+    //webServer->serveStatic(PSTR("/static/favicon.ico"), SPIFFS, settings::faviconFileName, "max-age=86400");
+
+    // serve assets from flash
+    webServer->on(PSTR("/static/script.js"), []() {
+        webServer->send_P(200, progmem_assets_strings::mime_application_javascript, progmem_assets_javascript::main);
+    });
+    webServer->on(PSTR("/static/style.css"), []() {
+        webServer->send_P(200, progmem_assets_strings::mime_text_css, progmem_assets_css::main);
+    });
+    webServer->on(PSTR("/static/favicon.ico"), []() {
+        webServer->send_P(200, progmem_assets_strings::mime_image_x_icon, progmem_assets_images::favicon, progmem_assets_images::favicon_len);
+    });
+    
+    webServer->onNotFound(handleNotFound);
+    Serial.println(F("WebServer up and running!"));
+
+
+    // set initial fan speed
+    if(!storage->automaticFanControlEnabled) {
+        //setFanSpeed(storage->fanSpeedActive1, storage->fanSpeedActive2, storage->fanSpeedActive3, false, false);
+        setFanSpeeds((int8_t*)storage->fanSpeedsActive, false, false);
     }
-  }
 
-  debugSettings();
-
-  f.close();
-}
-
-void debugSettings() {
-  Serial.println(F("Debugging settings: "));
-  Serial.print(F("PageRefreshTime: ")); Serial.println(settings.PageRefreshTime);
-  Serial.print(F("DisplayEnabled: ")); Serial.println(settings.DisplayEnabled);
-  Serial.print(F("DisplayAddress: ")); Serial.println(settings.DisplayAddress, HEX);
-  Serial.print(F("DisplayDurationPerMinute: ")); Serial.println(settings.DisplayDurationPerMinute);
-  Serial.print(F("DisplayFlipScreen: ")); Serial.println(settings.DisplayFlipScreen);
-  Serial.print(F("id: ")); Serial.println(settings.id);
-  Serial.print(F("FanSpeed1: ")); Serial.println(settings.FanSpeed1);
-  Serial.print(F("FanSpeed2: ")); Serial.println(settings.FanSpeed2);
-  Serial.print(F("FanSpeed3: ")); Serial.println(settings.FanSpeed3);
-  Serial.print(F("FanSpeedActive1: ")); Serial.println(settings.FanSpeedActive1);
-  Serial.print(F("FanSpeedActive2: ")); Serial.println(settings.FanSpeedActive2);
-  Serial.print(F("FanSpeedActive3: ")); Serial.println(settings.FanSpeedActive3);
-  Serial.print(F("AutomaticFanControlActive: ")); Serial.println(settings.AutomaticFanControlActive);
-  Serial.print(F("FanControlFan1_1: ")); Serial.println(settings.FanControlFan1_1);
-  Serial.print(F("FanControlFan1_2: ")); Serial.println(settings.FanControlFan1_2);
-  Serial.print(F("FanControlFan1_3: ")); Serial.println(settings.FanControlFan1_3);
-  Serial.print(F("FanControlFan1_4: ")); Serial.println(settings.FanControlFan1_4);
-  Serial.print(F("FanControlFan2_1: ")); Serial.println(settings.FanControlFan2_1);
-  Serial.print(F("FanControlFan2_2: ")); Serial.println(settings.FanControlFan2_2);
-  Serial.print(F("FanControlFan2_3: ")); Serial.println(settings.FanControlFan2_3);
-  Serial.print(F("FanControlFan2_4: ")); Serial.println(settings.FanControlFan2_4);
-  Serial.print(F("FanControlFan3_1: ")); Serial.println(settings.FanControlFan3_1);
-  Serial.print(F("FanControlFan3_2: ")); Serial.println(settings.FanControlFan3_2);
-  Serial.print(F("FanControlFan3_3: ")); Serial.println(settings.FanControlFan3_3);
-  Serial.print(F("FanControlFan3_4: ")); Serial.println(settings.FanControlFan3_4);
-  Serial.print(F("FanControlTemp_1: ")); Serial.println(settings.FanControlTemp_1);
-  Serial.print(F("FanControlTemp_2: ")); Serial.println(settings.FanControlTemp_2);
-  Serial.print(F("FanControlTemp_3: ")); Serial.println(settings.FanControlTemp_3);
-  Serial.print(F("FanControlTemp_4: ")); Serial.println(settings.FanControlTemp_4);
-  Serial.println("");
-}
-
-void saveSettings() {
-  SPIFFS.begin();
-  File f = SPIFFS.open(settingsFile, "w");
-  
-  if (f) {
-    StaticJsonDocument<1000> doc;
-    doc["id"] = settings.id;
-    doc["FanSpeed1"] = settings.FanSpeed1;
-    doc["FanSpeed2"] = settings.FanSpeed2;
-    doc["FanSpeed3"] = settings.FanSpeed3;
-    doc["FanSpeedActive1"] = settings.FanSpeedActive1;
-    doc["FanSpeedActive2"] = settings.FanSpeedActive2;
-    doc["FanSpeedActive3"] = settings.FanSpeedActive3;
-    doc["PageRefreshTime"] = settings.PageRefreshTime;
-    doc["DisplayEnabled"] = settings.DisplayEnabled;
-    doc["DisplayAddress"] = settings.DisplayAddress;
-    doc["DisplayDurationPerMinute"] = settings.DisplayDurationPerMinute;
-    doc["DisplayFlipScreen"] = settings.DisplayFlipScreen;
-    doc["AutomaticFanControlActive"] = settings.AutomaticFanControlActive;
-    doc["FanControlFan1_1"] = settings.FanControlFan1_1;
-    doc["FanControlFan1_2"] = settings.FanControlFan1_2;
-    doc["FanControlFan1_3"] = settings.FanControlFan1_3;
-    doc["FanControlFan1_4"] = settings.FanControlFan1_4;
-    doc["FanControlFan2_1"] = settings.FanControlFan2_1;
-    doc["FanControlFan2_2"] = settings.FanControlFan2_2;
-    doc["FanControlFan2_3"] = settings.FanControlFan2_3;
-    doc["FanControlFan2_4"] = settings.FanControlFan2_4;
-    doc["FanControlFan3_1"] = settings.FanControlFan3_1;
-    doc["FanControlFan3_2"] = settings.FanControlFan3_2;
-    doc["FanControlFan3_3"] = settings.FanControlFan3_3;
-    doc["FanControlFan3_4"] = settings.FanControlFan3_4;
-    doc["FanControlTemp_1"] = settings.FanControlTemp_1;
-    doc["FanControlTemp_2"] = settings.FanControlTemp_2;
-    doc["FanControlTemp_3"] = settings.FanControlTemp_3;
-    doc["FanControlTemp_4"] = settings.FanControlTemp_4;
-
-    int count = serializeJson(doc, f);
-    if (count == 0) {
-      Serial.println(F("Error saving settings to SPIFFS!"));
+    // initialize display
+    if(storage->displayEnabled) {
+        initDisplay();
     }
-    else {
-      Serial.print(F("Settings written successfully. Bytes written: ")); Serial.println(count);
-      debugSettings();
-    }
-    f.close();
-  }
-  else {
-    Serial.println(F("Error opening/creating settings file."));
-  }
-}
-
-void handleSaveSettings() {
-  int refreshInterval = server->arg("refreshInterval").toInt();
-  int displayDurationPerMinute = server->arg("displayDurationPerMinute").toInt();
-  bool displayEnabled = server->arg("displayEnabled") == "1";
-  bool displayFlipScreen = server->arg("displayFlipScreen") == "1";
-  bool automaticFanControlActive = server->arg("automaticFanControlActive") == "1";
   
-  // min 0, max 100, steps
-  int fan1_1 = min(max(0, (int)(server->arg("fan1_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan1_2 = min(max(0, (int)(server->arg("fan1_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan1_3 = min(max(0, (int)(server->arg("fan1_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan1_4 = min(max(0, (int)(server->arg("fan1_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan2_1 = min(max(0, (int)(server->arg("fan2_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan2_2 = min(max(0, (int)(server->arg("fan2_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan2_3 = min(max(0, (int)(server->arg("fan2_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan2_4 = min(max(0, (int)(server->arg("fan2_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan3_1 = min(max(0, (int)(server->arg("fan3_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan3_2 = min(max(0, (int)(server->arg("fan3_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan3_3 = min(max(0, (int)(server->arg("fan3_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int fan3_4 = min(max(0, (int)(server->arg("fan3_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
-  int temp_1 = server->arg("temp_1").toDouble();
-  int temp_2 = server->arg("temp_2").toDouble();
-  int temp_3 = server->arg("temp_3").toDouble();
-  int temp_4 = server->arg("temp_4").toDouble();
-
-  settings.FanControlFan1_1 = fan1_1;
-  settings.FanControlFan1_2 = fan1_2;
-  settings.FanControlFan1_3 = fan1_3;
-  settings.FanControlFan1_4 = fan1_4;
-  settings.FanControlFan2_1 = fan2_1;
-  settings.FanControlFan2_2 = fan2_2;
-  settings.FanControlFan2_3 = fan2_3;
-  settings.FanControlFan2_4 = fan2_4;
-  settings.FanControlFan3_1 = fan3_1;
-  settings.FanControlFan3_2 = fan3_2;
-  settings.FanControlFan3_3 = fan3_3;
-  settings.FanControlFan3_4 = fan3_4;
-  settings.FanControlTemp_1 = temp_1;
-  settings.FanControlTemp_2 = temp_2;
-  settings.FanControlTemp_3 = temp_3;
-  settings.FanControlTemp_4 = temp_4;
-
-  String displayAddressString = server->arg("displayAddress");
-  unsigned char displayAddress;
-  if(displayAddressString == "") { // fall back
-    displayAddress = 0x3C;
-  }
-  else {
-    displayAddress = hexString2int((char*)displayAddressString.c_str());
-  }
-
-  settings.PageRefreshTime = refreshInterval;
-
-  settings.DisplayAddress = displayAddress;
-  settings.DisplayDurationPerMinute = max(0, min(60, displayDurationPerMinute));
-  settings.DisplayEnabled = displayEnabled;
-  settings.DisplayFlipScreen = displayFlipScreen;
-  settings.AutomaticFanControlActive = automaticFanControlActive;
-
-  LastDisplayOnTime = 0; // always reset display timeout
-
-  saveSettings();
-  initDisplay();
-  sendHTML();
-}
-
-void handleJson() {
-  StaticJsonDocument<1000> doc;
-  double timeBefore = millis() - LastTempTime;
-
-  doc["Temperature1"] = LastTemp;
-  doc["Temperature1MillisBefore"] = timeBefore; // how many ms went since the temp was measured
-  doc["DisplayAddress"] = settings.DisplayAddress;
-  doc["DisplayEnabled"] = settings.DisplayEnabled;
-  doc["DisplayDurationPerMinute"] = settings.DisplayDurationPerMinute;
-  doc["DisplayFlipScreen"] = settings.DisplayFlipScreen;
-  doc["DisplayIsOn"] = displayIsOn;
-  doc["FanSpeed1"] = settings.FanSpeed1;
-  doc["FanSpeed2"] = settings.FanSpeed2;
-  doc["FanSpeed3"] = settings.FanSpeed3;
-  doc["FanSpeedActive1"] = settings.FanSpeedActive1;
-  doc["FanSpeedActive2"] = settings.FanSpeedActive2;
-  doc["FanSpeedActive3"] = settings.FanSpeedActive3;
-  doc["AutomaticFanControlActive"] = settings.AutomaticFanControlActive;
-  doc["ActiveFanControlSet"] = ActiveFanControlSet;
-  doc["FanControlFan1_1"] = settings.FanControlFan1_1;
-  doc["FanControlFan1_2"] = settings.FanControlFan1_2;
-  doc["FanControlFan1_3"] = settings.FanControlFan1_3;
-  doc["FanControlFan1_4"] = settings.FanControlFan1_4;
-  doc["FanControlFan2_1"] = settings.FanControlFan2_1;
-  doc["FanControlFan2_2"] = settings.FanControlFan2_2;
-  doc["FanControlFan2_3"] = settings.FanControlFan2_3;
-  doc["FanControlFan2_4"] = settings.FanControlFan2_4;
-  doc["FanControlFan3_1"] = settings.FanControlFan3_1;
-  doc["FanControlFan3_2"] = settings.FanControlFan3_2;
-  doc["FanControlFan3_3"] = settings.FanControlFan3_3;
-  doc["FanControlFan3_4"] = settings.FanControlFan3_4;
-  doc["FanControlTemp_1"] = settings.FanControlTemp_1;
-  doc["FanControlTemp_2"] = settings.FanControlTemp_2;
-  doc["FanControlTemp_3"] = settings.FanControlTemp_3;
-  doc["FanControlTemp_4"] = settings.FanControlTemp_4;
-  doc["PageRefreshTime"] = settings.PageRefreshTime;
-
-  String output;
-  serializeJson(doc, output);
-  server->send(200, APPLICATION_JSON, output);
-}
-
-void handleRoot() {
-  sendHTML();
-}
-
-void handleReset() {
-  server->send(200, TEXT_PLAIN, F("Resetting the controller in 5 seconds... Wifi will have to be reconfigured, too!"));
-  resetESP = true;
-  resetESPTime = millis() + 5000;
-}
-
-void handleResetSettings() {
-  SPIFFS.begin();
-  SPIFFS.format();
-  settings = Settings();
-  server->sendHeader(F("Location"), "/", true);
-  server->send(302, TEXT_PLAIN, "");
-}
-
-void handleResetSuccess() {
-  sendHTML(String(F("Settings reset successfully.")));
-}
-
-void handleOn() {
-  setFanSpeed(settings.FanSpeed1, settings.FanSpeed2, settings.FanSpeed3);
-  saveSettings();
-  String content = String(F("Fans turned on: ")) + (settings.FanSpeedActive1) + "% / " + (settings.FanSpeedActive2) + "% / " + (settings.FanSpeedActive3) + "%";
-  sendHTML(content);
-}
-
-void handleOff() {
-  setFanSpeed(0, 0, 0, false, true);
-  saveSettings();
-  String content = F("Fans turned off.<br />");
-  sendHTML(content);
-}
-
-void handleSet() {
-  int which = server->arg("which").toInt();
-  int val = server->arg("speed").toInt();
-
-  Serial.print(F("Set fan speed: which="));
-  Serial.print(which);
-  Serial.print(F(" speed="));
-  Serial.println(val);
-
-  switch (which) {
-    case 0:
-      setFanSpeed(val, val, val);
-      break;
-    case 1:
-      setFanSpeed(val, -1, -1);
-      break;
-    case 2:
-      setFanSpeed(-1, val, -1);
-      break;
-    case 3:
-      setFanSpeed(-1, -1, val);
-      break;
-    default:
-      break;
-  }
-  saveSettings();
-
-  String content = String(F("Fans set to: ")) + (settings.FanSpeedActive1) + "% / " + (settings.FanSpeedActive2) + "% / " + (settings.FanSpeedActive3) + "%";
-  sendHTML(content);
-}
-
-void setFanSpeed(int fan1, int fan2, int fan3, bool permanent, bool turnOffFanControl) {
-  if (fan1 < 0) { // -1 => ignore
-    fan1 = settings.FanSpeedActive1;
-  }
-  else if(permanent) {
-    settings.FanSpeed1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  }
-  
-  if (fan2 < 0) {
-    fan2 = settings.FanSpeedActive2;
-  }
-  else if(permanent) {
-    settings.FanSpeed2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  }
-  
-  if (fan3 < 0) {
-    fan3 = settings.FanSpeedActive3;
-  }
-  else if(permanent) {
-    settings.FanSpeed3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  }
-
-  analogWrite(fanPin1, min(fan1 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-  analogWrite(fanPin2, min(fan2 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-  analogWrite(fanPin3, min(fan3 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
-
-  settings.FanSpeedActive1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  settings.FanSpeedActive2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-  settings.FanSpeedActive3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
-
-  if(turnOffFanControl) {
-    settings.AutomaticFanControlActive = false;
-  }
-}
-
-void setFanSpeed(int fan1, int fan2, int fan3) {
-  setFanSpeed(fan1, fan2, fan3, true, true);
-}
-
-double readTemp() {
-  double val = 0;
-  /*for(int i = 0; i < 20; i++) {
-      val += analogRead(A0);
-      delay(1);
-    }
-  val = val / 20 / 1024;*/
-  /*val = (double)analogRead(A0)  / 1024;
-    Serial.print("val: "); Serial.println(val);
-    double Vcc = 3.3;
-    unsigned int Rs = 150000;
-    double R_NTC = (Rs * val) / (Vcc - val);
-    Serial.print("Resistance: "); Serial.println(R_NTC);
-    R_NTC = log(R_NTC);
-    double Temp = 1 / (0.001129148 + (0.000234125 + (0.0000000876741 * R_NTC * R_NTC ))* R_NTC );
-    Temp = Temp - 273.15;
-    Serial.print("Temp: "); Serial.println(Temp);
-    return Temp;*/
-  double R1 = 150000.0;
-  double Beta = 3950.0;
-  double To = 298.15;
-  double Ro = 10000.0;
-
-  double adcMax = 1023.0;
-  double Vs = 3.3;
-
-  double Vout = 3.3, Rt = 0;
-  double T, Tc;
-
-  Vout = analogRead(A0) * Vs / adcMax;
-  Rt = R1 * Vout / (Vs - Vout);
-  T = 1 / (1 / To + log(Rt / Ro) / Beta);
-  Tc = T - 273.15; // temp in Celsius
-  Tc = round(Tc * 100) / 100; // round to 2 decimals
-
-  return Tc;
-}
-
-/*void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
-  Serial.print("MQTT Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  char message[length + 1];
-  ByteToChar(payload, message, length);
-  Serial.println(message);
-
-  if (!strcmp(topic, "ESPFanControl/on")) {
-    Serial.println("MQTT on");
-    setFanSpeed(settings.FanSpeed1, settings.FanSpeed2, settings.FanSpeed3);
-  }
-
-  if (!strcmp(topic, "ESPFanControl/off")) {
-    Serial.println("MQTT off");
-    setFanSpeed(0, 0, 0);
-  }
-}*/
-
-void sendHTML() {
-  sendHTML("");
-}
-
-void sendHTML(String content) {
-  String contents[6];
-  
-  contents[0] = F("<!DOCTYPE html><html lang='en'>"
-                        "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><meta charset='UTF-8' />"
-                        //"<link rel=\"icon\" href=\"data:,\">
-                        "<link rel='shortcut icon' href='data:image/x-icon;base64,");
-  contents[1] = F("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AN8AAADfAAAA3wAAAN8AAADTAAAAegAAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFwAAAK4AAAD2AAAA+gAAAM0AAABwAAAAYQAAAGEAAABhAAAAYQAAAFwAAAAyAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAArgAAAPcAAAD3AAAAsAAAACEAAAAKAAAACgAAAAoAAAAKAAAACgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABcAAACtAAAA9gAAAPcAAACuAAAAFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQAAAIQAAADhAAAA4gAAAIYAAAARAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAIgAAAG4AAABvAAAAIwAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAADQAAAA0AAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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AAAAAAAAAAAAAQAAAAIAAAACAAAAAgAAAAMAAAAFAAAADQAAAB8AAAA3AAAASwAAAFQAAABPAAAAPwAAACYAAAASAAAABwAAAAAAAAACAAAABwAAAA4AAAATAAAAFAAAABIAAAAMAAAABgAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAALgAAAJ4AAADgAAAA/AAAAPwAAADhAAAAnwAAAC4AAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAYAAAAMAAAAEgAAABQAAAATAAAADgAAAAgAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJcAAADdAAAA/AAAAPwAAADcAAAAlgAAACYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADhAAAApAAAAEMAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAgAAAAHQAAABMAAAAHAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAADuAAAAywAAAJQAAACAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACBAAAAcwAAAEsAAAAgAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAAD4AAAA6wAAANUAAADNAAAAzQAAAM0AAADNAAAAzQAAAM0AAADOAAAAugAAAH8AAAA4AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP8AAAD6AAAA8QAAAOAAAADaAAAA2gAAANoAAADaAAAA2gAAANoAAADaAAAAxwAAAIoAAAA+AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAADvAAAAzQAAAJUAAACCAAAAggAAAIIAAACCAAAAggAAAIIAAACCAAAAdgAAAE8AAAAiAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP0AAADkAAAArAAAAFIAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAALgAAAB4AAAAMAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADdAAAAmAAAACoAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADdAAAAmQAAACwAAAAHAAAABwAAAAcAAAAHAAAABwAAAAcAAAAHAAAABgAAAAQAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP0AAADoAAAAuQAAAG0AAABSAAAAUgAAAFIAAABSAAAAUgAAAFIAAABSAAAASgAAADAAAAAUAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAAD1AAAA3wAAAL0AAACxAAAAsQAAALEAAACxAAAAsQAAALEAAACxAAAAoAAAAGoAAAAuAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP8AAAD8AAAA9QAAAOoAAADlAAAA5QAAAOUAAADlAAAA5QAAAOUAAADlAAAA0AAAAJAAAABAAAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAAD0AAAA3wAAALsAAACvAAAArwAAAK8AAACvAAAArwAAAK8AAACvAAAAnwAAAG0AAAAwAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP0AAADoAAAAuQAAAGwAAABSAAAAUwAAAFMAAABTAAAAUwAAAFMAAABTAAAASgAAADAAAAAVAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADfAAAAnwAAADcAAAAUAAAAFAAAABQAAAAUAAAAFAAAABQAAAAUAAAAEQAAAAsAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADcAAAAlwAAACYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAPwAAADhAAAApgAAAEUAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAIAAAABUAAAAJAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAADvAAAA0QAAAJ4AAACNAAAAjQAAAI0AAACNAAAAjQAAAI0AAACNAAAAfgAAAFIAAAAkAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP8AAAD6AAAA7gAAANwAAADWAAAA1gAAANYAAADWAAAA1gAAANYAAADWAAAAwQAAAIMAAAA6AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP8AAAD6AAAA7wAAAN4AAADYAAAA2AAAANgAAADYAAAA2AAAANgAAADZAAAAxQAAAIgAAAA8AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP4AAADuAAAAyQAAAIwAAAB2AAAAdgAAAHYAAAB2AAAAdgAAAHYAAAB3AAAAbAAAAEgAAAAfAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJwAAAJkAAADeAAAA/AAAAP0AAADjAAAAqQAAAEwAAAArAAAAKwAAACsAAAArAAAAKwAAACsAAAArAAAAJwAAABoAAAAKAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAJoAAADfAAAA/AAAAPwAAADeAAAAmgAAACoAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAAAwAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAJsAAADfAAAA/AAAAPwAAADgAAAAnAAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIwAAAIwAAADVAAAA+wAAAPwAAADWAAAAjQAAACQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAGQAAACuAAAA3gAAAN4AAACvAAAAZgAAABoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAACIAAABaAAAAiwAAAIsAAABcAAAAIwAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAgAAAAOgAAADoAAAAhAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAABQAAAAUAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==' />");
-  contents[2] = F("<style>"
-                  "html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center; line-height: 20px; background-color: #444; color: #eee; }"
-                  ".container { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; }"
-                  ".top { height: 60px; line-height: 60px; border-bottom: 1px dashed white; box-sizing: border-box; } .top h1 { margin: 0; } .top h1 a { color: white; text-decoration: none; } .top h1 a:hover { text-decoration: underline; }"
-                  ".content { text-align: center; width: 100%; max-width: 600px; padding: 20px 0px; }"
-                  ".menu { text-align: center; width: 100%; max-width: 600px; min-width: 300px; }"
-                  ".values { font-size: 120%; font-weight: bold; line-height: 130%; }"
-                  ".wrapper { background-color: #333; margin: 0px auto; max-width: 600px; height: calc(100vh - 60px); }"
-                  "#messageWindow { position: absolute; width: 300px; height: 50px; top: 5px; left: calc(50% - 150px); padding: 10px; font-size: 16px; line-height: 30px; background-color: #666; border: 1px solid black; box-sizing: border-box; opacity: 0; text-align: center; font-weight: bold; border-radius: 3px; color: white; transition: opacity 1s; }"
-                  ".fade { opacity: 1; transition: opacity 0.1s; } .fade-out { opacity: 0.7; }"
-                  "ul.nav li.heading { font-weight: bold; font-size: 120%; text-transform: uppercase; padding: 12px 16px; background-color: #555; border: 0px; border-top: 1px solid white; border-bottom: 1px solid white; } ul.nav li.heading a:hover { text-decoration: underline; }"
-                  "ul.nav .button { background-color: inherit; color: inherit; }"
-                  "ul.nav { list-style-type: none; margin: 0; padding: 0; width: 100%; box-sizing: border-box; background-color: #333; color: white; border: 0px solid #333; border-radius: 4px; }"
-                  "ul.nav li { font-size: 14px; line-height: 17px; padding: 8px 16px; }"
-                  "ul.nav li a { display: block; text-decoration: none; color: white; }"
-                  "ul.nav li:hover { background-color: #555; } ul.nav li:hover a { color: white; }"
-                  "ul.nav input { text-align: center; }"
-                  "</style><script>"
-                  "var getJSON=function(url,callback){var xhr=new XMLHttpRequest();xhr.open('GET',url,!0);xhr.responseType='json';xhr.onload=function(){var status=xhr.status;if(status===200){callback(null,xhr.response)}else{callback(status,xhr.response)}};xhr.send()};function refreshValues(){getJSON('/json',function(err,data){if(err!==null){displayMessage('Error refreshing values!');console.log('Error retrieving JSON!');return}var temp1Elem=document.getElementById('temperature1');var fanControlElem=document.getElementById('fanControl');var fanControlEnabledElem=document.getElementById('automaticFanControlActive');var fan1Elem=document.getElementById('fan1');var fan2Elem=document.getElementById('fan2');var fan3Elem=document.getElementById('fan3');fanControlElem.innerHTML=(data.AutomaticFanControlActive?'on':'off')+(data.ActiveFanControlSet!=0?' (Set '+data.ActiveFanControlSet+')':'');fanControlEnabledElem.checked=data.AutomaticFanControlActive;temp1Elem.innerHTML=data.Temperature1;fan1Elem.innerHTML=data.FanSpeedActive1;fan2Elem.innerHTML=data.FanSpeedActive2;fan3Elem.innerHTML=data.FanSpeedActive3;var divValues=document.getElementById('divValues');divValues.classList.add('fade-out');setTimeout(function(){divValues.classList.remove('fade-out')},100)})}var refreshInterval;function setRefreshInterval(interval){clearInterval(refreshInterval);if(typeof interval==='undefined'){var form=document.getElementById('settingsForm');interval=parseInt(form.elements.refreshInterval.value)*1000}if(interval>0){refreshInterval=setInterval(refreshValues,interval)}console.log('refresh timer: ',interval,'ms')}function submitSettingsForm(){document.getElementById('settingsForm').submit()}function displayMessage(text){var messageWindow=document.getElementById('messageWindow');messageWindow.innerHTML=text;messageWindow.style.visibility='visible';messageWindow.style.opacity='1';setTimeout(function(){messageWindow.style.opacity='0'},2000);setTimeout(function(){messageWindow.style.visibility='hidden'},3000)}window.onload=function(){getJSON('/json',function(err,data){if(err!==null){displayMessage('Error loading settings!');console.log('Error retrieving initial JSON!');return}var displayEnabledElem=document.getElementById('displayEnabled');displayEnabledElem.checked=data.DisplayEnabled;var displayFlipScreenElem=document.getElementById('displayFlipScreen');displayFlipScreenElem.checked=data.DisplayFlipScreen;var fanControlEnabledElem=document.getElementById('automaticFanControlActive');fanControlEnabledElem.checked=data.AutomaticFanControlActive;var fan1_1Elem=document.getElementById('fan1_1');var fan1_2Elem=document.getElementById('fan1_2');var fan1_3Elem=document.getElementById('fan1_3');var fan1_4Elem=document.getElementById('fan1_4');var fan2_1Elem=document.getElementById('fan2_1');var fan2_2Elem=document.getElementById('fan2_2');var fan2_3Elem=document.getElementById('fan2_3');var fan2_4Elem=document.getElementById('fan2_4');var fan3_1Elem=document.getElementById('fan3_1');var fan3_2Elem=document.getElementById('fan3_2');var fan3_3Elem=document.getElementById('fan3_3');var fan3_4Elem=document.getElementById('fan3_4');var temp_1Elem=document.getElementById('temp_1');var temp_2Elem=document.getElementById('temp_2');var temp_3Elem=document.getElementById('temp_3');fan1_1Elem.value=data.FanControlFan1_1;fan1_2Elem.value=data.FanControlFan1_2;fan1_3Elem.value=data.FanControlFan1_3;fan1_4Elem.value=data.FanControlFan1_4;fan2_1Elem.value=data.FanControlFan2_1;fan2_2Elem.value=data.FanControlFan2_2;fan2_3Elem.value=data.FanControlFan2_3;fan2_4Elem.value=data.FanControlFan2_4;fan3_1Elem.value=data.FanControlFan3_1;fan3_2Elem.value=data.FanControlFan3_2;fan3_3Elem.value=data.FanControlFan3_3;fan3_4Elem.value=data.FanControlFan3_4;temp_1Elem.value=data.FanControlTemp_1;temp_2Elem.value=data.FanControlTemp_2;temp_3Elem.value=data.FanControlTemp_3;var displayAddressElem=document.getElementById('displayAddress');displayAddressElem.value='0x'+data.DisplayAddress.toString(16).toUpperCase();var displayDurationPerMinuteElem=document.getElementById('displayDurationPerMinute');displayDurationPerMinuteElem.value=data.DisplayDurationPerMinute;var refreshIntervalElems=document.getElementsByName('refreshInterval');for(var i=0;i<refreshIntervalElems.length;i++){if(refreshIntervalElems[i].value==data.PageRefreshTime){refreshIntervalElems[i].checked=!0}}setRefreshInterval(data.PageRefreshTime*1000);console.log('Settings applied.');displayMessage('Settings loaded!')})}"
-                  "</script></head><body><div class='container'><div class='top'><h1><a href='/'>Hello!</a></h1></div>");
-
-  contents[3] = String(F("<div class='wrapper'><div class='content values' id='divValues'>Temperature: <span id='temperature1' class='fade'>")) + LastTemp + F("</span> &deg;C<br/><br />Auto fan control: <span id='fanControl' class='fade'>") + (settings.AutomaticFanControlActive ? F("on") : F("off")) + F(" (Set ") + ActiveFanControlSet + F(")</span><br/>Fan 1: <span id='fan1' class='fade'>") + String(settings.FanSpeedActive1) + F("</span> %<br /> Fan 2: <span id='fan2' class='fade'>") + settings.FanSpeedActive2 + F("</span> %<br/> Fan 3: <span id='fan3' class='fade'>") + settings.FanSpeedActive3 + F("</span> %</div>");
-
-  contents[4] = F("<div class='menu'><ul class='nav'>"
-
-                 "<li class='heading'><a href='/'>Fan control</a></li>"
-                 "<li><a href='/on'>Turn fans on (with last manual setting)</a></li>"
-                 "<li><a href='/off'>Turn fans off</a></li>"
-                 "<li><a href='/set?which=0&speed=25'>Set all fans to 25%</a></li>"
-                 "<li><a href='/set?which=0&speed=50'>Set all fans to 50%</a></li>"
-                 "<li><a href='/set?which=0&speed=75'>Set all fans to 75%</a></li>"
-                 "<li><a href='/set?which=0&speed=100'>Set all fans to 100%</a></li>"
-                 
-                 "<li><form method='get' action='/set'>Set fan <input type='text' name='which' value='0' size='1' /> (0 = all) to <input name='speed' type='text' size='3' /> % <input type='submit' value='set' class='button' /></form></li>"
-
-                 "<form id='settingsForm' method='post' action='/saveSettings'>"
-
-                 "<li class='heading'><a href='/'>Automatic fan control</a></li>"
-                 "<li><label>Enabled: <input type='checkbox' id='automaticFanControlActive' name='automaticFanControlActive' value='1' onchange='submitSettingsForm()' /></label></li>"
-                 //"<li>E.g. Fan 1 @ 25 % / Fan 2 @ 50 % / Fan 3 @ 75 % / below 25 &deg;C</li>"
-                 "<li><input type='text' size='3' placeholder='Fan 1' name='fan1_1' id='fan1_1' />%<input type='text' size='3' placeholder='Fan 2' name='fan2_1' id='fan2_1' />%<input type='text' size='3' placeholder='Fan 3' name='fan3_1' id='fan3_1' />% below <input type='text' size='3' placeholder='Temp' name='temp_1' id='temp_1' /> &deg;C</li>"
-                 "<li><input type='text' size='3' placeholder='Fan 1' name='fan1_2' id='fan1_2' />%<input type='text' size='3' placeholder='Fan 2' name='fan2_2' id='fan2_2' />%<input type='text' size='3' placeholder='Fan 3' name='fan3_2' id='fan3_2' />% below <input type='text' size='3' placeholder='Temp' name='temp_2' id='temp_2' /> &deg;C</li>"
-                 "<li><input type='text' size='3' placeholder='Fan 1' name='fan1_3' id='fan1_3' />%<input type='text' size='3' placeholder='Fan 2' name='fan2_3' id='fan2_3' />%<input type='text' size='3' placeholder='Fan 3' name='fan3_3' id='fan3_3' />% below <input type='text' size='3' placeholder='Temp' name='temp_3' id='temp_3' /> &deg;C</li>"
-                 "<li><input type='text' size='3' placeholder='Fan 1' name='fan1_4' id='fan1_4' />%<input type='text' size='3' placeholder='Fan 2' name='fan2_4' id='fan2_4' />%<input type='text' size='3' placeholder='Fan 3' name='fan3_4' id='fan3_4' />% above</li>"
-                 
-                 "<li class='heading'>Auto refresh</li>"
-                 "<li><label><input type='radio' name='refreshInterval' value='0' onclick='setRefreshInterval(0);submitSettingsForm()' /> off</label>&nbsp;<label><input type='radio' name='refreshInterval' value='1' onclick='setRefreshInterval();submitSettingsForm()' /> 1s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='3' onclick='setRefreshInterval();submitSettingsForm()' /> 3s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='5' onclick='setRefreshInterval();submitSettingsForm()' /> 5s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='10' onclick='setRefreshInterval();submitSettingsForm()' checked='checked' /> 10s</label></li>"
-                 "<li class='heading'>Display</li>"
-                 "<li><label>Enabled: <input type='checkbox' name='displayEnabled' id='displayEnabled' value='1' /></label></li>"
-                 "<li><label>Flip vertically: <input type='checkbox' name='displayFlipScreen' id='displayFlipScreen' value='1' /></label></li>"
-                 "<li>Address: <input type='text' name='displayAddress' id='displayAddress' value='0x3C' placeholder='0x3C' size='6' /></li>"
-                 "<li>Display time per minute: <input type='text' name='displayDurationPerMinute' id='displayDurationPerMinute' value='30' size='4' /> seconds<br /></li>"
-                 "<li class='heading' style='border-bottom: 0px;'><a href='javascript:submitSettingsForm()'>Save settings</a></li>"
-                 "</form>"
-
-                 "<li class='heading'>General</li>"
-                 "<li><a href='/json' target='_blank'>Show JSON info</a></li>"
-                 "<li><a href='/reset' onclick='if(!confirm(\"Confirm reset\")) return false;'>Reset settings + WiFi</a></li>"
-                 "<li><a href='/resetSettings' onclick='if(!confirm(\"Confirm reset\")) return false;'>Reset settings</a></li>"
-                 
-                 "</ul></div></div>"
-                 
-                 "<div id='messageWindow'>Test</div>");
-
-  contents[5] = String(F("<br /><br /><span style='font-size: 70%;'>Debug:<br/><br/>URI: ")) + server->uri() + F("<br/>Method: ") + ((server->method() == HTTP_GET) ? "GET" : "POST") + F("<br/>Arguments: ") + server->args() + "<br/>";
-  for (uint8_t i = 0; i < server->args(); i++) {
-    contents[5] += " " + server->argName(i) + ": " + server->arg(i) + "<br/>";
-  }
-  contents[5] += F("</span>");
-
-  contents[6] = F("<br /><br /><br />"
-                  "</div></body></html>");
-                  
-  //return header_begin + favicon + header_end + debug + body + content + body_end;
-  
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, TEXT_HTML, contents[0]);
-  for(int i = 1; i < sizeof(contents) / sizeof(contents[0]); i++) { // submission of chunks
-      if(i == 5) continue; // skip debug output
-      server->sendContent(contents[i]);
-  }
+    Serial.println(F("\nESP PWM Fan Control setup complete.\n"));
 }
 
 void loop()
 {
-  /*if (!mqttClient->connected() && strlen(settings.mqttBroker) > 3) { reconnect_mqtt(); }
-    mqttClient->loop();*/
-  server->handleClient(); // http client
+    /*if (!mqttClient->connected() && strlen(storage->mqttBroker) > 3) { reconnect_mqtt(); }
+      mqttClient->loop();*/
+    webServer->handleClient(); // http client
 
-  if((LastTempTime + 1000) < millis()) { // read temp (and do the other stuff) once per second
-    LastTemp = readTemp();
-    //LastTemp = (double)random(20, 30); // test mode
+    // read temp (and do the other stuff) once per second
+    if((storage->ntcTemperatureTime + 1000) < millis()) {
+        //storage->ntcTemperature = readTemperature();
+        storage->ntcTemperature = (float)random(20, 30); // test mode
+    
+        if(storage->displayEnabled) {
+            if(storage->displayIsOn && storage->displayDurationPerMinute != 60) {
+                // display on-time per minute exceeded -> turn off
+                if(storage->displayLastOnTime + storage->displayDurationPerMinute * 1000 < millis()) {
+                    displayValues(false);
+                }
+            }
 
-    if(settings.DisplayEnabled) {
-      if(displayIsOn && settings.DisplayDurationPerMinute != 60) {
-        if(LastDisplayOnTime + settings.DisplayDurationPerMinute * 1000 < millis()) { // on time per minute exceeded -> turn off
-          displayValues(false);
+            // turn display on after one minute
+            if(storage->displayLastOnTime == 0 || storage->displayLastOnTime + 60000 < millis()) {
+                storage->displayLastOnTime = millis();
+                displayValues(true);
+            }
+            // refresh every second if turned on
+            else if(storage->displayIsOn) {
+                displayValues(true);
+            }
         }
-      }
-      
-      if(LastDisplayOnTime == 0 || LastDisplayOnTime + 60000 < millis()) { // turn on after 1 min
-        LastDisplayOnTime = millis();
-        displayValues(true);
-      }
-      else if(displayIsOn) { // refresh every second if turned on
-        displayValues(true);
-      }
-    }
-    else if(displayIsOn) {
-      displayValues(false);
-    }
-  
-    if(settings.AutomaticFanControlActive) {
-      ActiveFanControlSet = autoFanControl();
-      Serial.println(String(F("Auto fan control: Applying set ")) + ActiveFanControlSet);
-    }
-    else {
-      ActiveFanControlSet = 0;
-    }
+        // turn display off if not enabled
+        else if(storage->displayIsOn) {
+            displayValues(false);
+        }
 
-    Serial.print(F("Temperature: ")); Serial.println(LastTemp);
-    LastTempTime = millis();
-  }
-
-  if(resetESP) {
-    if(millis() > resetESPTime) {
-      Serial.println("RESETTING ESP");
-      resetESP = false;
-      WiFi.disconnect(true);
-      ESP.reset();
-    }
-  }
-}
-
-int autoFanControl() {
-  double maxTemp = max(max(max(settings.FanControlTemp_1, settings.FanControlTemp_2), settings.FanControlTemp_3), LastTemp);
-  if(maxTemp == LastTemp) { // Temp above 
-    setFanSpeed(settings.FanControlFan1_4, settings.FanControlFan2_4, settings.FanControlFan3_4, false, false);
-    return 4;
-  }
-  else if(LastTemp < settings.FanControlTemp_3 && LastTemp > settings.FanControlTemp_2) {
-    setFanSpeed(settings.FanControlFan1_3, settings.FanControlFan2_3, settings.FanControlFan3_3, false, false);
-    return 3;
-  }
-  else if(LastTemp < settings.FanControlTemp_2 && LastTemp > settings.FanControlTemp_1) {
-    setFanSpeed(settings.FanControlFan1_2, settings.FanControlFan2_2, settings.FanControlFan3_2, false, false);
-    return 2;
-  }
-  else {
-    setFanSpeed(settings.FanControlFan1_1, settings.FanControlFan2_1, settings.FanControlFan3_1, false, false);
-    return 1;
-  }
-}
-
-void displayValues(bool turnOn) {
-  if(!displayIsOn && turnOn) {
-    display->displayOn();
-    Serial.println(F("Display turned on."));
-  }
-  else if(displayIsOn && !turnOn) {
-    display->displayOff();
-    Serial.println(F("Display turned off."));
-  }
-
-  if(turnOn) {
-    display->clear();
-    
-    if(settings.DisplayFlipScreen) {
-      display->flipScreenVertically();
-    }
-
-    // the yellow top area is bullshit on this display
-    /*display->setFont(Open_Sans_Regular_10);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->drawString(0, 2, String(F("Fan Control")));*/
-    
-    display->setFont(ArialMT_Plain_10);
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->drawString(0, 23, String(F("Fan 1: ")) + settings.FanSpeedActive1 + " %");
-    display->drawString(0, 37, String(F("Fan 2: ")) + settings.FanSpeedActive2 + " %");
-    display->drawString(0, 51, String(F("Fan 3: ")) + settings.FanSpeedActive3 + " %");
-
-    display->setFont(Open_Sans_Bold_12);
-    display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->drawString(117, 20, String(F("Temp:")));
-    display->drawString(128, 36, String(LastTemp) + F(" °C"));
-    display->setFont(ArialMT_Plain_10);
-    String activeSetString = "";
-    if(ActiveFanControlSet != 0) {
-      activeSetString = String(ActiveFanControlSet);
-    }
-    display->drawString(128, 51, String(F("Auto: ")) + (settings.AutomaticFanControlActive ? F("Set ") : F("off")) + activeSetString);
-    
-    display->display();
-  }
-  displayIsOn = turnOn;
-}
-
-/*void setup_mqtt() {
-    mqttClient->setServer(settings.mqttBroker, settings.mqttPort);
-    mqttClient->setCallback(handleMqttMessage);
-  }
-
-  void reconnect_mqtt() {
-    while (!mqttClient->connected() && mqttRetriesLeft-- > 0) {
-        Serial.print("Attempting MQTT connection to broker ");
-        Serial.print(settings.mqttBroker);
-        Serial.println("...");
-        bool connected = false;
-        if(settings.mqttLWT) {
-          connected = mqttClient->connect(settings.id, settings.mqttUser, settings.mqttPassword, settings.mqttLWTTopic, 1, 1, settings.mqttOfflineMessage);
+        // do the fan control ;)
+        if(storage->automaticFanControlEnabled) {
+            fanControl();
         }
         else {
-          connected = mqttClient->connect(settings.id, settings.mqttUser, settings.mqttPassword);
+            storage->activeFanControlSet = 0;
+        }
+    
+        Serial.print(F("Temperature: ")); Serial.println(storage->ntcTemperature);
+        storage->ntcTemperatureTime = millis();
+        
+        if(settings::debug) {
+            Serial.println(F("\nESP Diagnosis: "));
+            Serial.print(F("Free heap: ")); Serial.println(ESP.getFreeHeap());
+            Serial.print(F("Heap fragmentation: ")); Serial.println(ESP.getHeapFragmentation());
+            Serial.print(F("Max free block size: ")); Serial.println(ESP.getMaxFreeBlockSize());
+            Serial.println();
+        }
+    }
+
+    // reset the esp if desired...
+    if(storage->resetESP) {
+        if(millis() > storage->resetESPTime) {
+            Serial.println(F("=====\nRESETTING ESP...\n====="));
+            storage->resetESP = false;
+            WiFi.disconnect(true);
+            ESP.reset();
+        }
+    }
+}
+
+void handleSettingsSave() {
+    if(webServer->args() == 0) {
+        handleRedirect("/");
+        return;
+    }
+    uint8_t refreshInterval = webServer->arg("refreshInterval").toInt();
+    uint8_t displayDurationPerMinute = webServer->arg("displayDurationPerMinute").toInt();
+    bool displayEnabled = webServer->arg("displayEnabled") == "1";
+    bool displayFlipScreen = webServer->arg("displayFlipScreen") == "1";
+    bool automaticFanControlEnabled = webServer->arg("automaticFanControlEnabled") == "1";
+    uint8_t fanControlSetCount = min(storage->maxFanControlSets, (uint8_t)webServer->arg("fanControlSetCount").toInt()); // limit set count
+
+    /*
+    uint8_t fan1_1 = min(max(0, (uint8_t)(webServer->arg("fan1_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan1_2 = min(max(0, (uint8_t)(webServer->arg("fan1_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan1_3 = min(max(0, (uint8_t)(webServer->arg("fan1_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan1_4 = min(max(0, (uint8_t)(webServer->arg("fan1_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan2_1 = min(max(0, (uint8_t)(webServer->arg("fan2_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan2_2 = min(max(0, (uint8_t)(webServer->arg("fan2_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan2_3 = min(max(0, (uint8_t)(webServer->arg("fan2_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan2_4 = min(max(0, (uint8_t)(webServer->arg("fan2_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan3_1 = min(max(0, (uint8_t)(webServer->arg("fan3_1").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan3_2 = min(max(0, (uint8_t)(webServer->arg("fan3_2").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan3_3 = min(max(0, (uint8_t)(webServer->arg("fan3_3").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    uint8_t fan3_4 = min(max(0, (uint8_t)(webServer->arg("fan3_4").toInt() / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE), 100);
+    float temp_1 = webServer->arg("temp_1").toFloat();
+    float temp_2 = webServer->arg("temp_2").toFloat();
+    float temp_3 = webServer->arg("temp_3").toFloat();
+    float temp_4 = webServer->arg("temp_4").toFloat();
+  
+    storage->fanControlFan1_1 = fan1_1;
+    storage->fanControlFan1_2 = fan1_2;
+    storage->fanControlFan1_3 = fan1_3;
+    storage->fanControlFan1_4 = fan1_4;
+    storage->fanControlFan2_1 = fan2_1;
+    storage->fanControlFan2_2 = fan2_2;
+    storage->fanControlFan2_3 = fan2_3;
+    storage->fanControlFan2_4 = fan2_4;
+    storage->fanControlFan3_1 = fan3_1;
+    storage->fanControlFan3_2 = fan3_2;
+    storage->fanControlFan3_3 = fan3_3;
+    storage->fanControlFan3_4 = fan3_4;
+    storage->fanControlTemp_1 = temp_1;
+    storage->fanControlTemp_2 = temp_2;
+    storage->fanControlTemp_3 = temp_3;
+    storage->fanControlTemp_4 = temp_4;*/
+
+    /*delete [] storage->fanControlSets;
+    storage->fanControlSets = new FanControlSet[fanControlSetCount];*/
+    for(uint8_t i = 0; i < storage->fanControlSetCount; i++) {
+        delete storage->fanControlSets[i];
+    }
+    
+    storage->fanControlSetCount = fanControlSetCount;
+    storage->fanControlSets = new FanControlSet*[fanControlSetCount];
+
+    for(uint8_t i = 0; i < fanControlSetCount; i++) {
+        storage->fanControlSets[i] = new FanControlSet(settings::fanCount);
+        //for(uint8_t j = 0; j < (sizeof(storage->fanControlSets[0].fanSpeeds) / sizeof(uint8_t)); j++) {
+        for(uint8_t j = 0; j < settings::fanCount; j++) {
+            // min 0, max 100, fit to calculated PWM steps
+            uint8_t fanSpeed = storage->normalizeFanSpeedValue((uint8_t)webServer->arg(String("fanControlSetFanSpeed") + i + "_" + j).toInt());
+            storage->fanControlSets[i]->fanSpeeds[j] = fanSpeed;
+        }
+        
+        String fanControlSetTempArg = webServer->arg(String("fanControlSetTemp") + i);
+        /*float fanControlSetTemp = std::numeric_limits<float>::min();
+        if(fanControlSetTempArg != "") {
+            fanControlSetTemp = fanControlSetTempArg.toFloat();
+        }*/
+        storage->fanControlSets[i]->tempThreshold = fanControlSetTempArg.toFloat();
+    }
+    storage->sortFanControlSets();
+  
+    String displayAddressString = webServer->arg("displayAddress");
+    uint8_t displayAddress;
+    if(displayAddressString == "") { // fall back
+      displayAddress = 0x3C;
+    }
+    else {
+      displayAddress = FanControlHelper::convertHexStringToInt((char*)displayAddressString.c_str());
+    }
+  
+    storage->pageRefreshTime = refreshInterval;
+  
+    storage->displayAddress = displayAddress;
+    storage->displayDurationPerMinute = max(0, min(60, (int)displayDurationPerMinute));
+    storage->displayEnabled = displayEnabled;
+    storage->displayFlipScreen = displayFlipScreen;
+    /*if(storage->automaticFanControlEnabled && !automaticFanControlEnabled) {
+        setFanSpeed(storage->fanSpeed1, storage->fanSpeed2, storage->fanSpeed3); // restore previous manual setting
+    }*/
+    storage->automaticFanControlEnabled = automaticFanControlEnabled;
+  
+    storage->displayLastOnTime = 0; // always reset display timeout
+  
+    storage->save();
+    initDisplay();
+    handleRootWithMessage(F("Settings saved."));
+}
+
+void handleFansOn() {
+    setFanSpeeds((int8_t*)storage->fanSpeeds, false, true);
+    
+    String content = String(F("Fans turned on: "));
+    for(uint8_t i = 0; i < storage->fanCount; i++) {
+        content += String(storage->fanSpeedsActive[i]);
+        if(i < storage->fanCount - 1) {
+            content += F("% / ");
+        }
+        else {
+            content += F("%");
+        }
+    }
+    
+    handleRootWithMessage(content);
+}
+
+void handleFansOff() {
+    setFanSpeed(FANS_ALL, 0, false, true);
+    storage->save();
+    String content = F("Fans turned off.<br />");
+    handleRootWithMessage(content);
+}
+
+void handleFansSet() {
+    int8_t fanIndex = webServer->arg("fan").toInt() - 1; // number to index, 0 to -1
+    uint8_t fanSpeed = webServer->arg("speed").toInt();
+
+    if(settings::debug) {
+        Serial.print(F("Set fan ")); Serial.print(fanIndex); Serial.print(F(" to ")); Serial.print(fanSpeed); Serial.println(F("%"));
+    }
+    setFanSpeed(fanIndex, fanSpeed, true, true);
+    storage->save();
+  
+    String content = String(F("Fans set to: "));
+    for(uint8_t i = 0; i < storage->fanCount; i++) {
+        content += String(storage->fanSpeedsActive[i]);
+        if(i < storage->fanCount - 1) {
+            content += F("% / ");
+        }
+        else {
+            content += F("%");
+        }
+    }
+    handleRootWithMessage(content);
+}
+
+void handleRoot() {
+    String temporaryMessage = storage->getTemporaryMessage(); //webServer->arg("message");
+    
+    // HTML begin
+    String contents = F("<!DOCTYPE html><html lang='en'><head><meta name='viewport' content='width=device-width, initial-scale=1' /><meta charset='UTF-8' />"
+        "<title>Fan Control</title>"
+        "<link rel='shortcut icon' href='/static/favicon.ico' />"
+        "<link rel='stylesheet' href='/static/style.css' />"
+        "<script type='text/javascript' src='/static/script.js'></script></head>");
+
+/*
+    // favicon
+    contents += "";
+    // CSS
+    contents += "";
+    // JavaScript
+    contents += "";
+*/
+
+    // HTML body
+    contents += String(F("<body><div class='container'>"
+    
+        // headline
+                    "<div class='top'><h1><a href='/'>Fan Control</a></h1></div>"
+
+        // begin of wrapper container, values container
+                    "<div class='wrapper'><div class='content values' id='divValues'>"
+                    "Temperature: <span id='spanTemperature1' class='fade'>")) + storage->ntcTemperature + F("</span> &deg;C<br/><br />"
+                    "Auto fan control: <span id='spanFanControl' class='fade'>") + (storage->automaticFanControlEnabled ? String(F("on (Set ")) + String(storage->activeFanControlSet + 1) + F(")") : String(F("off"))) + F("</span><br/>");
+    for(uint8_t i = 0; i < storage->fanCount; i++) {                 
+        /*"Fan 1: <span id='spanFanSpeed1' class='fade'>") + storage->fanSpeedActive1 + F("</span> %<br />"
+        "Fan 2: <span id='spanFanSpeed2' class='fade'>") + storage->fanSpeedActive2 + F("</span> %<br/>"
+        "Fan 3: <span id='spanFanSpeed3' class='fade'>") + storage->fanSpeedActive3 + F("</span> %</div>"*/
+        contents += String(F("Fan ")) + (i + 1) + F(": <span id='spanFanSpeed") + (i + 1) + F("' class='fade'>") + storage->fanSpeedsActive[i] + F("</span> %<br />");
+    }
+
+        // menu
+    contents += String(F("</div><div class='menu'><ul class='nav'>"
+
+            // fan control
+                        "<li class='heading'>Fan control</li>"
+                        "<li><a href='/fans/on'>Turn fans on (with last manual setting)</a></li>"
+                        "<li><a href='/fans/off'>Turn fans off</a></li>"
+                        "<li><a href='/fans/set?fan=0&speed=25'>Set all fans to 25%</a></li>"
+                        "<li><a href='/fans/set?fan=0&speed=50'>Set all fans to 50%</a></li>"
+                        "<li><a href='/fans/set?fan=0&speed=75'>Set all fans to 75%</a></li>"
+                        "<li><a href='/fans/set?fan=0&speed=100'>Set all fans to 100%</a></li>"
+                        "<li><form method='get' action='/fans/set'>Set fan <input type='text' name='fan' value='0' size='1' /> (0 = all) to <input name='speed' type='text' size='3' /> % <input type='submit' value='set' class='link' /></form></li>"));
+    
+    contents += String(F(
+            // settings
+                        "<form id='settingsForm' method='post' action='/settings/save'>"
+
+                // automatic fan control
+                            "<li class='heading'>Automatic fan control</li>"
+                            "<li><label>Enabled: <input type='checkbox' id='checkAutomaticFanControlEnabled' name='automaticFanControlEnabled' value='1' onchange='submitSettingsForm()' /></label></li>"
+                            "<input type='hidden' name='fanControlSetCount' id='hiddenFanControlSetCount' />"
+                            "<div id='divFanControlSets'>"
+                            "</div>"
+                            "<li class='bold'><input type='button' onclick='insertFanControlSetRow()' title='Add new row' value='Add new row' /></li>"
+                            "<li>The rows will be sorted by temperature after saving.</li>"
+                    
+                // auto refresh
+                            "<li class='heading'>Auto refresh</li>"
+                            "<li><label><input type='radio' name='refreshInterval' value='0' onclick='setRefreshInterval(0);submitSettingsForm()' /> off</label>&nbsp;<label><input type='radio' name='refreshInterval' value='1' onclick='setRefreshInterval();submitSettingsForm()' /> 1s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='3' onclick='setRefreshInterval();submitSettingsForm()' /> 3s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='5' onclick='setRefreshInterval();submitSettingsForm()' /> 5s</label>&nbsp;<label><input type='radio' name='refreshInterval' value='10' onclick='setRefreshInterval();submitSettingsForm()' checked='checked' /> 10s</label></li>"
+
+                // display
+                            "<li class='heading'>Display</li>"
+                            "<li><label>Enabled: <input type='checkbox' name='displayEnabled' id='checkDisplayEnabled' value='1' /></label></li>"
+                            "<li><label>Flip vertically: <input type='checkbox' name='displayFlipScreen' id='checkDisplayFlipScreen' value='1' /></label></li>"
+                            "<li>Address: <input type='text' name='displayAddress' id='textDisplayAddress' value='0x3C' placeholder='0x3C' size='6' /></li>"
+                            "<li>Display time per minute: <input type='text' name='displayDurationPerMinute' id='textDisplayDurationPerMinute' value='30' size='4' /> seconds<br /></li>"
+                            "<li class='heading'><input type='button' class='link padding-10 color-secondary' onclick='submitSettingsForm()' value='Save settings'/></li>"
+                        "</form>"
+                    
+            // general commands
+                        "<li class='heading'>General</li>"
+                        "<li class='bold'><a href='/json' target='_blank'>Show JSON info</a></li>"
+                        "<li class='bold'><a href='/download?file=settings' target='_blank'>Download settings file</a></li>"
+                        "<li class='bold'><a href='/settings/resetAll' onclick='if(!confirm(\"Confirm reset\")) return false;'>Reset settings + WiFi</a></li>"
+                        "<li class='bold'><a href='/settings/reset' onclick='if(!confirm(\"Confirm reset\")) return false;'>Reset settings</a></li>"
+                        "<li class='bold'><a href='/settings/restart' onclick='if(!confirm(\"Confirm restart\")) return false;'>Restart ESP</a></li>"
+                    
+        // menu end
+                    "</ul></div></div>"
+
+        // message window for status messages
+                    "<div id='divMessageWindow' class='messageWindow'></div>"));
+                    
+    if(temporaryMessage != "") {
+        contents += String(F("<div id='divTemporaryMessage' class='temporaryMessage'>")) + temporaryMessage + F("</div>");
+    }
+    
+    if(settings::debug) {
+        // show HTTP request info
+        contents += String(F("<script>console.log('HTTP request:', 'URI: ")) + webServer->uri() + F("', 'Method: ") + ((webServer->method() == HTTP_GET) ? "GET" : "POST") + F("', 'Arguments: ") + webServer->args() + "');";
+        for (uint8_t i = 0; i < webServer->args(); i++) {
+            contents += "console.log('" + webServer->argName(i) + ":', '" + webServer->arg(i) + F("');");
+        }
+        contents += String(F("</script>"));
+    }
+
+    // HTML end
+    contents += String(F("<br /><br /><br />"
+                    "</div></body></html>"));
+
+    // send HTTP response to client
+    webServer->send(200, progmem_assets_strings::mime_text_html, contents);
+}
+
+void handleRootWithMessage(String message) {
+    handleRedirect("/", message);
+}
+
+void handleRedirect(String location) {
+    handleRedirect(location, "");
+}
+
+void handleRedirect(String location, String message) {
+    if(message != "") {
+        storage->setTemporaryMessage(message);
+    }
+    webServer->sendHeader(FPSTR(progmem_assets_strings::location), location, true);
+    webServer->send_P(302, progmem_assets_strings::mime_text_plain, "");
+}
+
+void handleNotFound() {
+    if(settings::debug) {
+        Serial.print(F("Requested URI not found: ")); Serial.println(webServer->uri());
+    }
+    handleRedirect("/", "Page not found!");
+}
+
+void handleJson() {
+    webServer->send(200, progmem_assets_strings::mime_application_json, storage->json());
+}
+
+void handleDownload() {
+    String file = webServer->arg("file");
+    if(settings::debug) {
+        Serial.print(F("Download requested: ")); Serial.println(file);
+    }
+    if(file == F("settings")) {
+        file = settings::settingsJsonFileName;
+    }
+    if(file == "" || !streamFile(file, true)) {
+        webServer->send_P(404, progmem_assets_strings::mime_text_plain, "");
+    }
+}
+
+void handleSettingsRestart() {
+    handleRedirect("/");
+    delay(1000);
+    ESP.restart();
+}
+
+void handleSettingsReset() {
+    SPIFFS.begin();
+    SPIFFS.remove(settings::settingsJsonFileName);
+    delete(storage);
+    storage = new Storage(settings::settingsJsonFileName, settings::fanPins, settings::fanCount, settings::pwmValueRange, settings::maxFanControlSets, settings::debug);
+    handleRedirect("/");
+}
+
+void handleSettingsResetAll() {
+    webServer->send(200, progmem_assets_strings::mime_text_plain, F("Resetting the controller in 5 seconds... Wifi will have to be reconfigured, too!"));
+    storage->resetESP = true;
+    storage->resetESPTime = millis() + 5000;
+}
+
+uint8_t fanControl() {
+    uint8_t activeFanControlSet = 0; // default to first row
+    for(uint8_t i = storage->fanControlSetCount - 1; i >= 1; i--) {
+        if(storage->ntcTemperature > storage->fanControlSets[i]->tempThreshold) {
+            // control sets are ordered
+            // beginning from the last, we can take the first one that applies
+            activeFanControlSet = i;
+            break;
+        }
+        // otherwise leave default
+    }
+    if(settings::debug) {
+        Serial.print(F("Active fan control set: "));Serial.println(activeFanControlSet);
+    }
+
+    if(storage->activeFanControlSet != activeFanControlSet) {
+        setFanSpeeds((int8_t*)storage->fanControlSets[activeFanControlSet]->fanSpeeds, false, false);
+        storage->activeFanControlSet = activeFanControlSet;
+        Serial.println(String(F("Auto fan control: Applying set ")) + storage->activeFanControlSet);
+    }
+    return activeFanControlSet;
+}
+
+/*void setFanSpeed(int8_t fan1, int8_t fan2, int8_t fan3, bool permanent, bool turnOffFanControl) {
+    if (fan1 < 0) { // -1 => ignore
+        fan1 = storage->fanSpeedActive1;
+    }
+    else if(permanent) {
+        storage->fanSpeed1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+    }
+    
+    if (fan2 < 0) {
+        fan2 = storage->fanSpeedActive2;
+    }
+    else if(permanent) {
+        storage->fanSpeed2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+    }
+    
+    if (fan3 < 0) {
+        fan3 = storage->fanSpeedActive3;
+    }
+    else if(permanent) {
+        storage->fanSpeed3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+    }
+  
+    analogWrite(FAN_1_PIN, min(fan1 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
+    analogWrite(FAN_2_PIN, min(fan2 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
+    analogWrite(FAN_3_PIN, min(fan3 / FAN_PERCENT_STEP_SIZE, ANALOG_WRITE_RANGE));
+  
+    storage->fanSpeedActive1 = min((fan1 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+    storage->fanSpeedActive2 = min((fan2 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+    storage->fanSpeedActive3 = min((fan3 / FAN_PERCENT_STEP_SIZE) * FAN_PERCENT_STEP_SIZE, 100);
+  
+    if(turnOffFanControl) {
+        storage->automaticFanControlEnabled = false;
+    }
+}*/
+
+void setFanSpeeds(int8_t fanSpeeds[], bool permanent, bool turnOffFanControl) {
+    for(uint8_t i = 0; i < sizeof(fanSpeeds) / sizeof(int8_t); i++) {
+        if(fanSpeeds[i] < 0) { // -1 => ignore this one
+            continue;
+        }
+        setFanSpeed(i, (uint8_t)fanSpeeds[i], permanent, turnOffFanControl);
+    }
+}
+
+void setFanSpeed(int8_t fanIndex, uint8_t fanSpeed, bool permanent, bool turnOffFanControl) {
+    if(fanIndex >= storage->fanCount || (fanIndex < 0 && fanIndex != FANS_ALL)) { // validate index
+        if(settings::debug) {
+            Serial.println(F("Invalid fan index!"));
+        }
+        return; 
+    }
+    if(fanIndex == FANS_ALL) { // set all fans to fanSpeed
+        if(settings::debug) {
+            Serial.print(F("Set all fans to ")); Serial.println(fanSpeed);
+        }
+        for(uint8_t i = 0; i < storage->fanCount; i++) {
+            setFanSpeed(i, fanSpeed, permanent, turnOffFanControl);
+        }
+        return;
+    }
+    
+    uint8_t value = storage->normalizeFanSpeedValue(fanSpeed); // adjust value to calculated steps limited by 100 percent
+    if(permanent) {
+        storage->fanSpeeds[fanIndex] = value;
+    }
+
+    if(settings::debug) {
+        Serial.print(F("Set fan ")); Serial.print(fanIndex); Serial.print(F(" to ")); Serial.println(fanSpeed);
+    }
+    analogWrite(storage->fanPins[fanIndex], value);
+    storage->fanSpeedsActive[fanIndex] = value;
+    if(turnOffFanControl) {
+        storage->automaticFanControlEnabled = false;
+    }
+}
+
+/*void setFanSpeed(int8_t fan1, int8_t fan2, int8_t fan3) {
+    setFanSpeed(fan1, fan2, fan3, true, true);
+}
+
+void setFanSpeed(FanControlSet fanControlSet) {
+    setFanSpeed(fanControlSet.fanSpeeds[0], fanControlSet.fanSpeeds[1], fanControlSet.fanSpeeds[2], false, false);
+}*/
+
+void displayValues(bool turnOn) {
+    if(!storage->displayIsOn && turnOn) {
+        display->displayOn();
+        if(settings::debug) {
+            Serial.println(F("Display turned on."));
+        }
+    }
+    else if(storage->displayIsOn && !turnOn) {
+        display->displayOff();
+        if(settings::debug) {
+            Serial.println(F("Display turned off."));
+        }
+    }
+  
+    if(turnOn) {
+        display->clear();
+        
+        if(storage->displayFlipScreen) {
+            display->flipScreenVertically();
+        }
+    
+        // the yellow top area is crap on the tested display
+        /*display->setFont(Open_Sans_Regular_10);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->drawString(0, 2, String(F("Fan Control")));*/
+        
+        display->setFont(ArialMT_Plain_10);
+        display->setTextAlignment(TEXT_ALIGN_LEFT);
+        display->drawString(0, 23, String(F("Fan 1: ")) + storage->fanSpeedsActive[0] + " %");
+        display->drawString(0, 37, String(F("Fan 2: ")) + storage->fanSpeedsActive[1] + " %");
+        display->drawString(0, 51, String(F("Fan 3: ")) + storage->fanSpeedsActive[2] + " %");
+    
+        display->setFont(progmem_assets_fonts::Open_Sans_Bold_12);
+        display->setTextAlignment(TEXT_ALIGN_RIGHT);
+        display->drawString(117, 20, String(F("Temp:")));
+        display->drawString(128, 36, String(storage->ntcTemperature) + F(" °C"));
+        display->setFont(ArialMT_Plain_10);
+        String activeSetString = "";
+        if(storage->automaticFanControlEnabled) {
+            activeSetString = String(F("Set ")) + (storage->activeFanControlSet + 1);
+        }
+        else {
+            activeSetString = F("off");
+        }
+        display->drawString(128, 51, String(F("Auto: ")) + activeSetString);
+        
+        display->display();
+    }
+    storage->displayIsOn = turnOn;
+}
+
+bool streamFile(String filename, bool download) {
+    SPIFFS.begin();
+    String path = filename;
+    if (path.endsWith(PSTR("/"))) {
+        return false;
+    }
+    
+    if(path[0] != '/') {
+        path = "/" + path;
+    }
+    else {
+        filename = filename.substring(1);
+    }
+    
+    String contentType = getContentType(path, download);
+    if(SPIFFS.exists(path)) {
+        File file = SPIFFS.open(path, "r");
+
+        webServer->sendHeader(PSTR("content-disposition"), String(F("attachment; filename=\"")) + filename + "\"");
+        webServer->streamFile(file, contentType);
+        file.close();
+        return true;
+    }
+    return false;
+}
+
+float readTemperature() {
+    return FanControlHelper::calculateNTCTemperature(analogRead(settings::ntcAnalogPin), settings::ntcValueRange, settings::ntcVoltage, settings::ntcReferenceResistance, settings::ntcReferenceTemperature, settings::ntcBeta, settings::ntcPullUpResistorValue, settings::ntcRoundTemperatureToDecimals);
+}
+
+void initDisplay() {
+    if(display != NULL) {
+        display->end();
+        delete(display);
+    }
+    display = new SSD1306Brzo(storage->displayAddress, settings::sdaPin, settings::sclPin);
+    display->init();
+    Serial.println(F("Init display..."));
+}
+
+String getContentType(String filename, bool download) {
+    const char *contentType;
+    if (download) {
+        contentType = progmem_assets_strings::mime_application_octet_stream;
+    } else if (filename.endsWith(PSTR(".htm")) || filename.endsWith(PSTR(".html"))) {
+        contentType = progmem_assets_strings::mime_text_html;
+    } else if (filename.endsWith(PSTR(".css"))) {
+        contentType = progmem_assets_strings::mime_text_css;
+    } else if (filename.endsWith(PSTR(".js"))) {
+        contentType = progmem_assets_strings::mime_application_javascript;
+    } else if (filename.endsWith(PSTR(".json"))) {
+        contentType = progmem_assets_strings::mime_application_json;
+    } else if (filename.endsWith(PSTR(".png"))) {
+        contentType = progmem_assets_strings::mime_image_png;
+    } else if (filename.endsWith(PSTR(".gif"))) {
+        contentType = progmem_assets_strings::mime_image_gif;
+    } else if (filename.endsWith(PSTR(".jpg")) || filename.endsWith(PSTR(".jpeg"))) {
+        contentType = progmem_assets_strings::mime_image_jpeg;
+    } else if (filename.endsWith(PSTR(".ico"))) {
+        contentType = progmem_assets_strings::mime_image_x_icon;
+    } else if (filename.endsWith(PSTR(".xml"))) {
+        contentType = progmem_assets_strings::mime_application_x_gzip;
+    } else if (filename.endsWith(PSTR(".pdf"))) {
+        contentType = progmem_assets_strings::mime_application_x_pdf;
+    } else if (filename.endsWith(PSTR(".zip"))) {
+        contentType = progmem_assets_strings::mime_application_x_zip;
+    } else if (filename.endsWith(PSTR(".gz"))) {
+        contentType = progmem_assets_strings::mime_application_x_gzip;
+    } else {
+        contentType = progmem_assets_strings::mime_text_plain;
+    }
+    return FPSTR(contentType);
+}
+
+/*void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
+    Serial.print("MQTT Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    char message[length + 1];
+    ByteToChar(payload, message, length);
+    Serial.println(message);
+  
+    if (!strcmp(topic, "ESPFanControl/on")) {
+        Serial.println("MQTT on");
+        setFanSpeed(storage->FanSpeed1, storage->FanSpeed2, storage->FanSpeed3);
+    }
+  
+    if (!strcmp(topic, "ESPFanControl/off")) {
+        Serial.println("MQTT off");
+        setFanSpeed(0, 0, 0);
+    }
+}
+
+void setup_mqtt() {
+      mqttClient->setServer(storage->mqttBroker, storage->mqttPort);
+      mqttClient->setCallback(handleMqttMessage);
+  }
+
+void reconnect_mqtt() {
+    while (!mqttClient->connected() && mqttRetriesLeft-- > 0) {
+        Serial.print(storage->mqttBroker);
+        Serial.println("...");
+        bool connected = false;
+        if(storage->mqttLWT) {
+            connected = mqttClient->connect(storage->id, storage->mqttUser, storage->mqttPassword, storage->mqttLWTTopic, 1, 1, storage->mqttOfflineMessage);
+        }
+        else {
+            connected = mqttClient->connect(storage->id, storage->mqttUser, storage->mqttPassword);
         }
         if (connected) {
-          Serial.println("MQTT Connected.");
-          mqttClient->publish(settings.mqttLWTTopic, settings.mqttOnlineMessage, 1);
-          mqttClient->subscribe((String(settings.mqttTopic) + "/#").c_str());
+            Serial.println("MQTT Connected.");
+            mqttClient->publish(storage->mqttLWTTopic, storage->mqttOnlineMessage, 1);
+            mqttClient->subscribe((String(storage->mqttTopic) + "/#").c_str());
         } else {
-          Serial.print("failed, rc=");
-          Serial.print(mqttClient->state());
-          Serial.println(" try again in 5 seconds");
-          delay(5000);
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient->state());
+            Serial.println(" try again in 5 seconds");
+            delay(5000);
         }
     }
-  }*/
-
-void ByteToChar(byte* bytes, char* chars, unsigned int count) {
-  for (unsigned int i = 0; i < count; i++)
-    chars[i] = (char)bytes[i];
-  chars[count] = (char)0;
-}
-
-inline int char2hex(char c)
-{
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return 0;
-}
-
-unsigned char hexString2int(char *s)
-{
-  unsigned char x = 0;
-  if(sizeof(s) / sizeof(char) > 2) {  // skip "0x"
-    if(s[0] == '0' && s[1] == 'x') {
-      s += 2;
-    }
-  }
-  for(;;) {
-   char c = *s;
-   if (c >= '0' && c <= '9') {
-      x *= 16;
-      x += c - '0';
-   }
-   else if (c >= 'A' && c <= 'F') {
-      x *= 16;
-      x += (c - 'A') + 10;
-   }
-   else if (c >= 'a' && c <= 'f') {
-      x *= 16;
-      x += (c - 'a') + 10;
-   }
-   else break;
-   s++;
-  }
-  return x;
-}
+}*/
