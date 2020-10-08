@@ -31,9 +31,10 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 
 ### Hardware
 - An ESP8266
-- NTC wired properly to `V+`, `GND` and `A0` (schematic will be added soon)
+- NTC wired properly to `V+`, `GND` and `A0`
 - Fans connected to the desired I/O pins (and `V+`/`GND`, of course) - preconfigured to `D7`, `D6` and `D3`
 - (optional) An OLED connected to `SDA`/`SCL` (`D2`/`D1`)
+- For an example wiring, please see the [schematic](/schematic) folder :)
 
 ### Software
 - Arduino IDE (https://www.arduino.cc/en/Main/Software) (since 1.0-beta)
@@ -131,6 +132,10 @@ All of the relevant (and some not-so-relevant) variables and configuration data 
 You can see that the fans are set to `25 %` each at the moment and there are three configuration sets for `26 °C`, `24 °C` and `below 24 °C` measured temperature. The automatic fan control mode is enabled, whereas the last manual fan speed setting was `100 %` for all three channels. The last NTC temperature was `23.6 °C` which was measured `736 ms` ago.  
 Of course, since the project is in an early state, the naming and structure probably will still change and improve.
 <!-- ![JSON output](https://github.com/faeibson/ESPPWMFanControl/raw/master/screenshots/json_output_1.0beta2.png "JSON output") -->
+
+## Credits
+
+The favicon has been made by [Stefania Servidio](https://thenounproject.com/term/water-temperature/523895/). The previously used icon can be found [here](https://www.pngitem.com/middle/iJTRwwb_engine-temperature-icon-png-clipart-png-download-water/).
 
 ## Changelog
 
