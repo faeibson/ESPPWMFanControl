@@ -38,9 +38,9 @@ Simply flash the project onto your ESP board through the Arduino IDE, or try out
 
 ### Software
 - Arduino IDE (https://www.arduino.cc/en/Main/Software) (since 1.0-beta)
-- Arduino IDE ESP8266 Libraries (https://github.com/esp8266/Arduino) (since 1.0-beta)
+- Arduino IDE ESP8266 Libraries (https://github.com/esp8266/Arduino) (1.0-beta < 3.0.0)
 - ArduinoJson (https://github.com/bblanchon/ArduinoJson) (since 1.0-beta)
-- Brzo I2C (https://github.com/pasko-zh/brzo_i2c) (since 1.0-beta)
+- Brzo I2C (https://github.com/pasko-zh/brzo_i2c) (1.0-beta < 1.3.3)
 - ESP8266 OLED driver for SSD1306 (https://github.com/ThingPulse/esp8266-oled-ssd1306) (since 1.0-beta)
 - WiFiManager (https://github.com/tzapu/WiFiManager) (since 1.0-beta)
 <!-- - ESP8266FS Plugin (https://github.com/esp8266/arduino-esp8266fs-plugin) (since 1.0-beta2)-->
